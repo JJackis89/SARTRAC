@@ -13,6 +13,7 @@ rasterio==1.3.9
 
 # Professional oceanographic modeling
 opendrift==1.14.3
+psutil==5.9.8
 
 # Professional visualization
 matplotlib==3.8.1
