@@ -1,0 +1,98 @@
+# Cloud Run Deployment Configuration
+# This file provides an example for deploying the OLCI detection service to Google Cloud Run
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: sargassum-olci-detector
+  namespace: default
+  labels:
+    app: sargassum-detection
+  annotations:
+    run.googleapis.com/ingress: all
+    run.googleapis.com/execution-environment: gen2
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: "10"
+        autoscaling.knative.dev/minScale: "0"
+        run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/memory: "2Gi"
+        run.googleapis.com/cpu: "1000m"
+        run.googleapis.com/timeout: "1800s"  # 30 minutes for GEE processing
+    spec:
+      containerConcurrency: 1  # Process one request at a time
+      timeoutSeconds: 1800     # 30 minutes timeout
+      containers:
+      - name: olci-detector
+        image: gcr.io/YOUR_PROJECT_ID/sargassum-olci-detector:latest  # TODO: Replace with your image
+        ports:
+        - containerPort: 8080
+        env:
+        - name: EE_SERVICE_ACCOUNT
+          value: "your-service-account@your-project.iam.gserviceaccount.com"  # TODO: Replace
+        - name: EE_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ee-private-key
+              key: private-key-json
+        - name: GCS_BUCKET
+          value: "your-gcs-bucket"  # TODO: Replace with your bucket
+        - name: OFFSHORE_NM
+          value: "20"
+        resources:
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+  traffic:
+  - percent: 100
+    latestRevision: true
+
+---
+# Example Cloud Scheduler job configuration
+# Deploy this after the Cloud Run service is deployed
+
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: daily-sargassum-detection
+spec:
+  schedule: "0 6 * * *"  # Daily at 06:00 UTC
+  timeZone: "UTC"
+  description: "Daily Sargassum detection using OLCI data"
+  httpTarget:
+    uri: "https://sargassum-olci-detector-PROJECT_ID.a.run.app/run"  # TODO: Replace with your URL
+    httpMethod: "POST"
+    headers:
+      Content-Type: "application/json"
+    body: |
+      {
+        "date": "{{ .FormattedTime "2006-01-02" }}"
+      }
+    oidcToken:
+      serviceAccountEmail: "cloud-scheduler@YOUR_PROJECT_ID.iam.gserviceaccount.com"  # TODO: Replace
+  retryConfig:
+    retryCount: 3
+    maxRetryDuration: "7200s"  # 2 hours
+    minBackoffDuration: "5s"
+    maxBackoffDuration: "3600s"
+    maxDoublings: 5

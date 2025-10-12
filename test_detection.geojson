@@ -1,0 +1,298 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "date": "2024-01-10",
+    "threshold": 0.5,
+    "roi_file": "data/test_roi.geojson",
+    "detection_count": 15,
+    "generated": "2025-10-12T12:36:15.595398",
+    "note": "Mock data for pipeline testing"
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -0.6867439158875421,
+          4.3717916092663
+        ]
+      },
+      "properties": {
+        "detection_value": 0.7023,
+        "threshold": 0.5,
+        "confidence": 0.671,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 73,
+        "area_km2": 0.65
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          1.3582571766039853,
+          5.718923386704931
+        ]
+      },
+      "properties": {
+        "detection_value": 0.7033,
+        "threshold": 0.5,
+        "confidence": 0.695,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 36,
+        "area_km2": 0.93
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -0.6022902237410412,
+          4.371231656020665
+        ]
+      },
+      "properties": {
+        "detection_value": 0.5049,
+        "threshold": 0.5,
+        "confidence": 0.772,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 83,
+        "area_km2": 1.5
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          0.8858187174542302,
+          4.667164491983065
+        ]
+      },
+      "properties": {
+        "detection_value": 0.6936,
+        "threshold": 0.5,
+        "confidence": 0.937,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 64,
+        "area_km2": 0.88
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          0.29680254786648774,
+          4.9415542159067005
+        ]
+      },
+      "properties": {
+        "detection_value": 0.7526,
+        "threshold": 0.5,
+        "confidence": 0.63,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 27,
+        "area_km2": 1.9
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -1.3042716544813726,
+          5.281003138867399
+        ]
+      },
+      "properties": {
+        "detection_value": 0.5741,
+        "threshold": 0.5,
+        "confidence": 0.647,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 48,
+        "area_km2": 1.11
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -1.4155532491884464,
+          4.932016660491495
+        ]
+      },
+      "properties": {
+        "detection_value": 0.6327,
+        "threshold": 0.5,
+        "confidence": 0.708,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 53,
+        "area_km2": 1.2
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -3.3702179005282638,
+          5.0397374219496855
+        ]
+      },
+      "properties": {
+        "detection_value": 0.7202,
+        "threshold": 0.5,
+        "confidence": 0.842,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 33,
+        "area_km2": 1.88
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          0.9954531843887069,
+          4.420470195415712
+        ]
+      },
+      "properties": {
+        "detection_value": 0.5224,
+        "threshold": 0.5,
+        "confidence": 0.895,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 29,
+        "area_km2": 1.68
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -1.841178619536068,
+          5.986188051132291
+        ]
+      },
+      "properties": {
+        "detection_value": 0.6911,
+        "threshold": 0.5,
+        "confidence": 0.84,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 69,
+        "area_km2": 1.15
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          0.7204903072676392,
+          5.854746362466836
+        ]
+      },
+      "properties": {
+        "detection_value": 0.6846,
+        "threshold": 0.5,
+        "confidence": 0.731,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 47,
+        "area_km2": 1.31
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -0.2553722507734224,
+          4.586804241048063
+        ]
+      },
+      "properties": {
+        "detection_value": 0.7783,
+        "threshold": 0.5,
+        "confidence": 0.776,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 46,
+        "area_km2": 1.27
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          0.15740441289717833,
+          5.345736697830537
+        ]
+      },
+      "properties": {
+        "detection_value": 0.7771,
+        "threshold": 0.5,
+        "confidence": 0.851,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 46,
+        "area_km2": 0.37
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          1.4888037310201931,
+          6.263428950452158
+        ]
+      },
+      "properties": {
+        "detection_value": 0.7902,
+        "threshold": 0.5,
+        "confidence": 0.912,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 100,
+        "area_km2": 1.62
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -3.101193068437707,
+          5.680428179634245
+        ]
+      },
+      "properties": {
+        "detection_value": 0.6813,
+        "threshold": 0.5,
+        "confidence": 0.728,
+        "date": "2024-01-10",
+        "source": "mock_erddap",
+        "pixel_count": 11,
+        "area_km2": 0.96
+      }
+    }
+  ]
+}
