@@ -368,11 +368,32 @@ def main():
         
         if len(lons) == 0:
             logger.warning("No seed points available - creating empty forecast")
+            # Create empty GeoDataFrame with proper geometry
+            from shapely.geometry import Point
             empty_gdf = gpd.GeoDataFrame(
                 columns=['particle_id', 'lon', 'lat', 'status', 'forecast_time'],
+                geometry=[],
                 crs='EPSG:4326'
             )
-            forecaster.save_results(empty_gdf, args.out)
+            # Save empty forecast directly
+            output_path = Path(args.out)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Create minimal empty GeoJSON structure
+            empty_geojson = {
+                "type": "FeatureCollection",
+                "features": [],
+                "properties": {
+                    "forecast_time": datetime.utcnow().isoformat(),
+                    "message": "No detection points found for forecast"
+                }
+            }
+            
+            import json
+            with open(output_path, 'w') as f:
+                json.dump(empty_geojson, f, indent=2)
+            
+            logger.info(f"Saved empty forecast to {output_path}")
             return 0
         
         # Seed particles
