@@ -5,16 +5,6 @@ on:
     # Run daily at 06:00 UTC
     - cron: '0 6 * * *'
   workflow_dispatch:
-    inputs:
-      date:
-        description: 'Date for forecast (YYYY-MM-DD)'
-        required: false
-        type: string
-      hours:
-        description: 'Forecast duration in hours'
-        required: false
-        default: '72'
-        type: string
 
 env:
   PYTHON_VERSION: '3.11'
@@ -32,33 +22,15 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Cache pip dependencies
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
     - name: Set forecast date
-      id: set-date
       run: |
-        if [ -n "${{ github.event.inputs.date }}" ]; then
-          echo "FORECAST_DATE=${{ github.event.inputs.date }}" >> $GITHUB_ENV
-        else
-          echo "FORECAST_DATE=$(date -u +%Y-%m-%d)" >> $GITHUB_ENV
-        fi
-        
-        if [ -n "${{ github.event.inputs.hours }}" ]; then
-          echo "FORECAST_HOURS=${{ github.event.inputs.hours }}" >> $GITHUB_ENV
-        else
-          echo "FORECAST_HOURS=72" >> $GITHUB_ENV
-        fi
+        echo "FORECAST_DATE=$(date -u +%Y-%m-%d)" >> $GITHUB_ENV
+        echo "FORECAST_HOURS=72" >> $GITHUB_ENV
 
     - name: Create output directories
       run: |
@@ -72,215 +44,83 @@ jobs:
           --nm 20 \
           --verbose
 
-    - name: Detect VIIRS CHLA
-      id: viirs-detect
+    - name: Run detections
       continue-on-error: true
       run: |
-        echo "Detecting VIIRS Chlorophyll for AFAI..."
-        python scripts/detect_erddap_afai.py \
-          --date ${{ env.FORECAST_DATE }} \
-          --dataset viirs_chla \
-          --threshold 0.5 \
-          --roi data/ghana_20nm.geojson \
-          --out data/viirs_chla_${{ env.FORECAST_DATE }}.geojson \
-          --verbose
-        
-        if [ -f "data/viirs_chla_${{ env.FORECAST_DATE }}.geojson" ]; then
-          echo "viirs_success=true" >> $GITHUB_OUTPUT
-        else
-          echo "viirs_success=false" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Detect S3A OLCI CHLA
-      id: s3a-olci-detect
-      continue-on-error: true
-      run: |
-        echo "Detecting S3A OLCI Chlorophyll..."
-        python scripts/detect_erddap_afai.py \
-          --date ${{ env.FORECAST_DATE }} \
-          --dataset s3a_olci_chla \
-          --threshold 0.5 \
-          --roi data/ghana_20nm.geojson \
-          --out data/s3a_olci_chla_${{ env.FORECAST_DATE }}.geojson \
-          --verbose
-        
-        if [ -f "data/s3a_olci_chla_${{ env.FORECAST_DATE }}.geojson" ]; then
-          echo "s3a_olci_success=true" >> $GITHUB_OUTPUT
-        else
-          echo "s3a_olci_success=false" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Detect S3B OLCI CHLA
-      id: s3b-olci-detect
-      continue-on-error: true
-      run: |
-        echo "Detecting S3B OLCI Chlorophyll..."
-        python scripts/detect_erddap_afai.py \
-          --date ${{ env.FORECAST_DATE }} \
-          --dataset s3b_olci_chla \
-          --threshold 0.5 \
-          --roi data/ghana_20nm.geojson \
-          --out data/s3b_olci_chla_${{ env.FORECAST_DATE }}.geojson \
-          --verbose
-        
-        if [ -f "data/s3b_olci_chla_${{ env.FORECAST_DATE }}.geojson" ]; then
-          echo "s3b_olci_success=true" >> $GITHUB_OUTPUT
-        else
-          echo "s3b_olci_success=false" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Trigger Cloud Run GEE processing (optional)
-      if: vars.CLOUD_RUN_URL != ''
-      continue-on-error: true
-      run: |
-        echo "Triggering Cloud Run GEE processing..."
-        curl -X POST "${{ vars.CLOUD_RUN_URL }}/run?date=${{ env.FORECAST_DATE }}" \
-          -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-          -H "Content-Type: application/json" \
-          -d '{"date": "${{ env.FORECAST_DATE }}"}' \
-          --max-time 30
-
-    - name: Download GEE exports (optional)
-      if: secrets.GCP_SA_KEY != ''
-      continue-on-error: true
-      run: |
-        echo "Setting up GCP authentication..."
-        echo "${{ secrets.GCP_SA_KEY }}" | base64 -d > gcp-key.json
-        export GOOGLE_APPLICATION_CREDENTIALS=gcp-key.json
-        
-        # Install gsutil if needed
-        if ! command -v gsutil &> /dev/null; then
-          curl https://sdk.cloud.google.com | bash
-          source $HOME/google-cloud-sdk/path.bash.inc
-        fi
-        
-        echo "Downloading GEE centroids..."
-        gsutil -q cp "gs://${{ vars.GCS_BUCKET }}/sargassum/olci/centroids_${{ env.FORECAST_DATE }}.geojson" \
-          "data/gee_centroids_${{ env.FORECAST_DATE }}.geojson" || echo "GEE centroids not found"
+        echo "Running satellite detections..."
+        for dataset in viirs_chla s3a_olci_chla s3b_olci_chla; do
+          echo "Detecting $dataset..."
+          python scripts/detect_erddap_afai.py \
+            --date ${FORECAST_DATE} \
+            --dataset $dataset \
+            --threshold 0.5 \
+            --roi data/ghana_20nm.geojson \
+            --out data/${dataset}_${FORECAST_DATE}.geojson \
+            --verbose || echo "Failed to detect $dataset"
+        done
 
     - name: Merge detections
       run: |
         echo "Merging detection files..."
-        
-        # Find all detection files for the date
-        detection_files=""
-        for file in data/*_${{ env.FORECAST_DATE }}.geojson; do
-          if [ -f "$file" ]; then
-            detection_files="$detection_files $file"
-          fi
-        done
-        
-        if [ -n "$detection_files" ]; then
-          python scripts/merge_geojson_points.py \
-            $detection_files \
-            --out data/merged_detections_${{ env.FORECAST_DATE }}.geojson \
-            --date ${{ env.FORECAST_DATE }} \
-            --roi data/ghana_20nm.geojson \
-            --verbose
-        else
-          echo "No detection files found, creating empty merged file..."
-          echo '{"type": "FeatureCollection", "features": []}' > data/merged_detections_${{ env.FORECAST_DATE }}.geojson
-        fi
+        python scripts/merge_geojson_points.py \
+          data/*_${FORECAST_DATE}.geojson \
+          --out data/merged_detections_${FORECAST_DATE}.geojson \
+          --date ${FORECAST_DATE} \
+          --roi data/ghana_20nm.geojson \
+          --verbose || echo '{"type": "FeatureCollection", "features": []}' > data/merged_detections_${FORECAST_DATE}.geojson
 
     - name: Run drift forecast
+      env:
+        CURRENTS_URL: ${{ secrets.CURRENTS_URL }}
+        WINDS_URL: ${{ secrets.WINDS_URL }}
       run: |
         echo "Running Sargassum drift forecast..."
         
-        # Set up ocean/wind data URLs if available
-        currents_arg=""
-        winds_arg=""
-        
-        if [ -n "${{ secrets.CURRENTS_URL }}" ]; then
-          currents_arg="--currents-url ${{ secrets.CURRENTS_URL }}"
+        # Build arguments for ocean/wind data
+        args=""
+        if [ -n "$CURRENTS_URL" ]; then
+          args="$args --currents-url $CURRENTS_URL"
         fi
-        
-        if [ -n "${{ secrets.WINDS_URL }}" ]; then
-          winds_arg="--winds-url ${{ secrets.WINDS_URL }}"
+        if [ -n "$WINDS_URL" ]; then
+          args="$args --winds-url $WINDS_URL"
         fi
         
         python scripts/forecast_opendrift.py \
-          --detections data/merged_detections_${{ env.FORECAST_DATE }}.geojson \
-          --out outputs/forecast_${{ env.FORECAST_DATE }}.geojson \
-          --hours ${{ env.FORECAST_HOURS }} \
+          --detections data/merged_detections_${FORECAST_DATE}.geojson \
+          --out outputs/forecast_${FORECAST_DATE}.geojson \
+          --hours ${FORECAST_HOURS} \
           --windage 0.01 \
           --particles 5 \
           --roi data/ghana_20nm.geojson \
-          $currents_arg \
-          $winds_arg \
+          $args \
           --verbose
 
-    - name: Generate QA map (optional)
+    - name: Generate map
       continue-on-error: true
       run: |
-        echo "Generating QA map..."
-        
-        detection_files=""
-        for file in data/*_${{ env.FORECAST_DATE }}.geojson; do
-          if [ -f "$file" ] && [ -s "$file" ]; then
-            detection_files="$detection_files $file"
-          fi
-        done
-        
+        echo "Generating forecast map..."
         python scripts/render_map.py \
           --roi data/ghana_20nm.geojson \
-          --detections $detection_files \
-          --forecast outputs/forecast_${{ env.FORECAST_DATE }}.geojson \
-          --out outputs/map_${{ env.FORECAST_DATE }}.png \
-          --title "Ghana Sargassum Forecast - ${{ env.FORECAST_DATE }}" \
+          --detections data/*_${FORECAST_DATE}.geojson \
+          --forecast outputs/forecast_${FORECAST_DATE}.geojson \
+          --out outputs/map_${FORECAST_DATE}.png \
+          --title "Ghana Sargassum Forecast - ${FORECAST_DATE}" \
           --verbose
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: sargassum-forecast-${{ env.FORECAST_DATE }}
+        name: sargassum-forecast
         path: |
-          data/ghana_20nm.geojson
-          data/*_${{ env.FORECAST_DATE }}.geojson
-          outputs/forecast_${{ env.FORECAST_DATE }}.geojson
-          outputs/map_${{ env.FORECAST_DATE }}.png
+          data/*.geojson
+          outputs/*.geojson
+          outputs/*.png
         retention-days: 30
 
-    - name: Create release (optional)
-      if: github.ref == 'refs/heads/main'
-      continue-on-error: true
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: forecast-${{ env.FORECAST_DATE }}
-        name: Sargassum Forecast ${{ env.FORECAST_DATE }}
-        body: |
-          Automated Sargassum detection and forecast for ${{ env.FORECAST_DATE }}
-          
-          **Forecast Details:**
-          - Date: ${{ env.FORECAST_DATE }}
-          - Duration: ${{ env.FORECAST_HOURS }} hours
-          - VIIRS CHLA: ${{ steps.viirs-detect.outputs.viirs_success }}
-          - S3A OLCI CHLA: ${{ steps.s3a-olci-detect.outputs.s3a_olci_success }}
-          - S3B OLCI CHLA: ${{ steps.s3b-olci-detect.outputs.s3b_olci_success }}
-          
-          **Files:**
-          - `forecast_${{ env.FORECAST_DATE }}.geojson`: Drift forecast particles
-          - `merged_detections_${{ env.FORECAST_DATE }}.geojson`: Combined detections
-          - `ghana_20nm.geojson`: Region of interest
-          - `map_${{ env.FORECAST_DATE }}.png`: QA visualization
-        files: |
-          data/ghana_20nm.geojson
-          data/merged_detections_${{ env.FORECAST_DATE }}.geojson
-          outputs/forecast_${{ env.FORECAST_DATE }}.geojson
-          outputs/map_${{ env.FORECAST_DATE }}.png
-        draft: false
-        prerelease: false
-
-    - name: Cleanup
-      if: always()
+    - name: Summary
       run: |
-        # Clean up sensitive files
-        rm -f gcp-key.json
-        
-        # Print summary
-        echo "=== Forecast Summary ==="
-        echo "Date: ${{ env.FORECAST_DATE }}"
-        echo "Duration: ${{ env.FORECAST_HOURS }} hours"
-        echo "VIIRS CHLA: ${{ steps.viirs-detect.outputs.viirs_success }}"
-        echo "S3A OLCI CHLA: ${{ steps.s3a-olci-detect.outputs.s3a_olci_success }}"
-        echo "S3B OLCI CHLA: ${{ steps.s3b-olci-detect.outputs.s3b_olci_success }}"
+        echo "=== Forecast Complete ==="
+        echo "Date: ${FORECAST_DATE}"
+        echo "Files generated:"
+        ls -la data/ outputs/
         echo "========================"
