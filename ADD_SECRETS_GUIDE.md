@@ -5,7 +5,7 @@ Follow these exact steps to add the required secrets and variables to your GitHu
 ## 📝 STEP-BY-STEP INSTRUCTIONS
 
 ### 1. Navigate to Your Repository Settings
-1. Go to your GitHub repository: `https://github.com/YOUR_USERNAME/SARTRAC`
+1. Go to your GitHub repository: `https://github.com/JJackis89/SARTRAC`
 2. Click the **Settings** tab (top right of the repository)
 3. In the left sidebar, click **Secrets and variables**
 4. Click **Actions**

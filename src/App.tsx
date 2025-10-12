@@ -4,7 +4,6 @@ import { LatLngExpression } from 'leaflet';
 import L from 'leaflet';
 import html2canvas from 'html2canvas';
 import { 
-  Waves, 
   MapPin, 
   X, 
   ChevronDown, 
@@ -21,11 +20,13 @@ import {
   Search,
   Camera,
   Info,
-  Calendar
+  Calendar,
+  Activity
 } from 'lucide-react';
-import SargassumOverlay from './components/SargassumOverlay';
+import { ForecastOverlay } from './components/ForecastOverlay';
 import MapController from './components/MapController';
 import CoastSnapPoints from './components/CoastSnapPoints';
+import { forecastService, ForecastData as LiveForecastData } from './services/forecastService';
 
 // Import logos
 import epaLogo from './assets/logos/epa-logo.png';
@@ -39,21 +40,13 @@ const GHANA_BOUNDS: [[number, number], [number, number]] = [
   [11.5, 1.5]  // Northeast
 ];
 
-interface ForecastData {
-  date: string;
-  concentration: number[][];
-  driftDirection: number[][];
-  uncertainty: 'Low' | 'Medium' | 'High';
-}
-
 function App() {
   const mapRef = useRef<L.Map | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentDay, setCurrentDay] = useState(1);
-  const [forecastDays, setForecastDays] = useState(7);
+  const [currentForecastIndex, setCurrentForecastIndex] = useState(0);
   const [opacity, setOpacity] = useState(0.7);
   const [showLayers, setShowLayers] = useState({
-    density: true,
+    forecast: true,
     drift: false,
     uncertainty: false,
     bathymetry: false,
@@ -61,8 +54,7 @@ function App() {
     coastsnap: true
   });
   const [baseMap, setBaseMap] = useState('satellite');
-  const [forecastData, setForecastData] = useState<ForecastData[]>([]);
-  const [lastUpdated] = useState(new Date().toISOString());
+  const [availableForecasts, setAvailableForecasts] = useState<LiveForecastData[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [loopEnabled, setLoopEnabled] = useState(false);
@@ -76,62 +68,49 @@ function App() {
   const [uncertaintyStyle, setUncertaintyStyle] = useState<'alpha' | 'contour' | 'hatching'>('alpha');
   const [collapsedLayers, setCollapsedLayers] = useState<Set<string>>(new Set());
   const [compareMode, setCompareMode] = useState(false);
-  const [showCalendar, setShowCalendar] = useState(false);
-
-  // Mission control metadata
-  const modelInfo = {
-    name: 'SARTRAC',
-    version: 'v2.1',
-    resolution: '1 km',
-    dataWindow: '2025-10-11 18:00–24:00 UTC'
-  };
 
   // Callback to receive map instance from MapController
   const handleMapReady = (map: L.Map) => {
     mapRef.current = map;
   };
 
-  // Generate mock forecast data
+  // Load available forecasts from GitHub releases
   useEffect(() => {
-    const generateMockData = (): ForecastData[] => {
-      const data: ForecastData[] = [];
-      for (let day = 1; day <= 7; day++) {
-        const date = new Date();
-        date.setDate(date.getDate() + day);
+    const loadAvailableForecasts = async () => {
+      try {
+        const dates = await forecastService.getAvailableForecastDates();
+        const forecasts: LiveForecastData[] = [];
         
-        const concentration: number[][] = [];
-        const driftDirection: number[][] = [];
-        
-        for (let lat = 0; lat < 20; lat++) {
-          concentration[lat] = [];
-          driftDirection[lat] = [];
-          for (let lng = 0; lng < 20; lng++) {
-            const baseConcentration = Math.sin(lat * 0.3) * Math.cos(lng * 0.3);
-            concentration[lat][lng] = Math.max(0, baseConcentration + Math.random() * 0.5);
-            driftDirection[lat][lng] = (day * 45 + lat * 10 + lng * 5) % 360;
+        // Load the most recent forecasts (up to 7 days)
+        for (const date of dates.slice(0, 7)) {
+          try {
+            const forecast = await forecastService.getForecastForDate(date);
+            if (forecast) {
+              forecasts.push(forecast);
+            }
+          } catch (error) {
+            console.warn(`Failed to load forecast for ${date}:`, error);
           }
         }
         
-        data.push({
-          date: date.toISOString().split('T')[0],
-          concentration,
-          driftDirection,
-          uncertainty: day <= 3 ? 'Low' : day <= 5 ? 'Medium' : 'High'
-        });
+        setAvailableForecasts(forecasts);
+      } catch (error) {
+        console.error('Failed to load available forecasts:', error);
+        // Fallback to empty array if no forecasts available
+        setAvailableForecasts([]);
       }
-      return data;
     };
 
-    setForecastData(generateMockData());
+    loadAvailableForecasts();
   }, []);
 
-  // Auto-play animation
+  // Auto-play animation for forecast timeline
   useEffect(() => {
     let interval: any;
-    if (isPlaying) {
+    if (isPlaying && availableForecasts.length > 0) {
       interval = setInterval(() => {
-        setCurrentDay(prev => {
-          const next = prev >= forecastDays ? (loopEnabled ? 1 : prev) : prev + 1;
+        setCurrentForecastIndex(prev => {
+          const next = prev >= availableForecasts.length - 1 ? (loopEnabled ? 0 : prev) : prev + 1;
           if (!loopEnabled && next === prev) {
             setIsPlaying(false);
           }
@@ -140,7 +119,7 @@ function App() {
       }, 1500 / playbackSpeed);
     }
     return () => clearInterval(interval);
-  }, [isPlaying, forecastDays, playbackSpeed, loopEnabled]);
+  }, [isPlaying, availableForecasts.length, playbackSpeed, loopEnabled]);
 
   // Keyboard controls
   useEffect(() => {
@@ -157,38 +136,28 @@ function App() {
           break;
         case 'ArrowLeft':
           e.preventDefault();
-          if (e.shiftKey) {
-            // Shift+Left for hour scrubbing (if available)
-            setCurrentDay(prev => Math.max(1, prev - 1));
-          } else {
-            setCurrentDay(prev => Math.max(1, prev - 1));
-          }
+          setCurrentForecastIndex(prev => Math.max(0, prev - 1));
           break;
         case 'ArrowRight':
           e.preventDefault();
-          if (e.shiftKey) {
-            // Shift+Right for hour scrubbing (if available)
-            setCurrentDay(prev => Math.min(forecastDays, prev + 1));
-          } else {
-            setCurrentDay(prev => Math.min(forecastDays, prev + 1));
-          }
+          setCurrentForecastIndex(prev => Math.min(availableForecasts.length - 1, prev + 1));
           break;
         case 'Home':
           e.preventDefault();
-          setCurrentDay(1);
+          setCurrentForecastIndex(0);
           break;
         case 'End':
           e.preventDefault();
-          setCurrentDay(forecastDays);
+          setCurrentForecastIndex(Math.max(0, availableForecasts.length - 1));
           break;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying, forecastDays]);
+  }, [isPlaying, availableForecasts.length]);
 
-  const currentForecast = forecastData[currentDay - 1];
+  const currentForecast = availableForecasts[currentForecastIndex] || null;
 
   // Map utility functions
   const handleZoomIn = () => {
@@ -275,7 +244,7 @@ Mac: Cmd+Shift+4`);
 
         // Create and download
         const link = document.createElement('a');
-        link.download = `ghana-sargassum-forecast-day${currentDay}-${Date.now()}.png`;
+        link.download = `ghana-sargassum-forecast-${currentForecast?.date || 'current'}-${Date.now()}.png`;
         link.href = canvas.toDataURL('image/png', 0.8);
         document.body.appendChild(link);
         link.click();
@@ -322,7 +291,7 @@ Browser:
   const handleShare = () => {
     try {
       const url = window.location.href;
-      const text = `Ghana Sargassum Early Advisory System - Day ${currentDay} Forecast`;
+      const text = `Ghana Sargassum Early Advisory System - ${currentForecast?.date || 'Current'} Forecast`;
       
       if (navigator.share) {
         navigator.share({
@@ -549,47 +518,82 @@ Color Scale:
         <div className={`absolute top-0 left-0 h-full z-40 transition-all duration-300 ease-in-out ${
           drawerOpen ? 'w-80' : 'w-0'
         } overflow-hidden`}>
-          <div className="h-full w-80 overflow-y-auto" style={{ background: 'var(--ocean-glass)', backdropFilter: 'blur(20px)', borderRight: '1px solid rgba(94, 234, 212, 0.2)', boxShadow: '0 8px 32px rgba(10, 15, 28, 0.3)' }}>
+          <div className="h-full w-80 overflow-y-auto flex flex-col min-h-0" style={{ background: 'rgba(36, 52, 66, 0.95)', backdropFilter: 'blur(20px)', borderRight: '1px solid rgba(94, 234, 212, 0.2)', boxShadow: '0 8px 32px rgba(10, 15, 28, 0.3)' }}>
             {drawerOpen && (
-              <div className="p-6 space-y-6">
+              <div className="p-5 space-y-5 flex-1 min-h-0 overflow-y-auto">
                 {/* Drawer Header */}
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-bold" style={{ color: 'var(--foam-white)' }}>Layers & Forecast</h2>
+                <div className="flex items-center justify-between pb-4 border-b border-gray-600/30">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
+                    <h2 className="text-lg font-bold text-white">Control Center</h2>
+                    <div className="ml-2 px-2 py-1 text-xs font-medium bg-green-600/20 text-green-300 rounded border border-green-500/30">
+                      LIVE
+                    </div>
+                  </div>
                   <button
                     onClick={() => setDrawerOpen(false)}
-                    className="p-2 rounded-lg transition-all duration-200"
-                    style={{ background: 'rgba(45, 62, 80, 0.6)', border: '1px solid rgba(94, 234, 212, 0.15)', color: 'var(--teal-foam)' }}
+                    className="p-2 rounded-lg transition-all duration-200 hover:bg-gray-700/50 border border-gray-600/30 text-gray-300 hover:text-white hover:border-gray-500/50"
+                    title="Close Control Panel"
                   >
                     <X className="h-4 w-4" />
                   </button>
                 </div>
 
-                {/* Forecast Range Section - Sticky */}
-                <div className="space-y-4">
-                  <div className="sticky top-0 z-10 p-3 rounded-lg" style={{ background: 'rgba(45, 62, 80, 0.8)', backdropFilter: 'blur(8px)', border: '1px solid rgba(94, 234, 212, 0.2)' }}>
-                    <h3 className="text-sm font-bold" style={{ color: 'var(--foam-white)' }}>Forecast Range</h3>
+                {/* Integrated Forecast System */}
+                <div className="rounded-xl p-4 border border-green-500/20 bg-gradient-to-br from-green-900/20 to-blue-900/20 backdrop-blur-sm">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-3 h-3 rounded-full bg-green-400 animate-pulse"></div>
+                      <h3 className="text-base font-bold text-white">Live Forecast System</h3>
+                    </div>
+                    <div className="px-2 py-1 text-xs font-medium bg-green-500/20 text-green-300 rounded-full border border-green-500/30">
+                      {availableForecasts.length} FORECASTS
+                    </div>
                   </div>
-                  <div className="px-3">
-                    <select 
-                      value={forecastDays}
-                      onChange={(e) => setForecastDays(parseInt(e.target.value))}
-                      className="w-full px-3 py-2 rounded-lg text-sm border-none outline-none transition-all duration-200"
-                      style={{ background: 'rgba(45, 62, 80, 0.8)', border: '1px solid rgba(94, 234, 212, 0.2)', color: 'var(--foam-white)' }}
-                    >
-                      <option value={3} className="bg-slate-800">3 Days (High Confidence)</option>
-                      <option value={5} className="bg-slate-800">5 Days (Medium Confidence)</option>
-                      <option value={7} className="bg-slate-800">7 Days (Lower Confidence)</option>
-                    </select>
+                  <div className="space-y-3">
+                    {availableForecasts.length > 0 ? (
+                      <div className="bg-gradient-to-r from-gray-800/40 to-gray-700/40 backdrop-blur-sm rounded-lg p-3 border border-gray-600/30">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-medium text-white">Current Forecast</span>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={showLayers.forecast}
+                              onChange={(e) => setShowLayers(prev => ({ ...prev, forecast: e.target.checked }))}
+                              className="sr-only peer"
+                            />
+                            <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-green-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
+                          </label>
+                        </div>
+                        <p className="text-xs text-gray-300">
+                          {currentForecast ? `${currentForecast.date} • ${currentForecast.particles.length} particles` : 'Select a forecast to view'}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="text-center py-4 bg-gradient-to-r from-orange-900/30 to-red-900/30 backdrop-blur-sm rounded-lg border border-orange-500/30">
+                        <Activity className="h-8 w-8 mx-auto mb-2 text-orange-400" />
+                        <p className="text-white text-sm font-medium">No Forecasts Available</p>
+                        <p className="text-orange-300 text-xs mt-1">System runs daily at 06:00 UTC</p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {/* Data Layers Section - Sticky */}
-                <div className="space-y-4">
-                  <div className="sticky top-0 z-10 p-3 rounded-lg" style={{ background: 'rgba(45, 62, 80, 0.8)', backdropFilter: 'blur(8px)', border: '1px solid rgba(94, 234, 212, 0.2)' }}>
-                    <h3 className="text-sm font-bold" style={{ color: 'var(--foam-white)' }}>Data Layers</h3>
+                {/* Data Layers Section - Enhanced Card */}
+                <div className="rounded-xl p-4 border border-blue-500/20 bg-gradient-to-br from-blue-900/20 to-cyan-900/20 backdrop-blur-sm">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center space-x-3">
+                      <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                      </svg>
+                      <h3 className="text-base font-bold text-white">Data Layers</h3>
+                    </div>
+                    <div className="px-2 py-1 text-xs font-medium bg-blue-500/20 text-blue-300 rounded-full border border-blue-500/30">
+                      {Object.values(showLayers).filter(Boolean).length} ACTIVE
+                    </div>
                   </div>
                   
-                  <div className="px-3 space-y-3">
+                  <div className="space-y-4">
                     {/* Sargassum Density Layer - Enhanced */}
                     <div className={`layer-card ${collapsedLayers.has('density') ? 'collapsed' : ''}`}>
                       <div 
@@ -609,8 +613,8 @@ Color Scale:
                         <label className="flex items-center space-x-3" onClick={(e) => e.stopPropagation()}>
                           <input
                             type="checkbox"
-                            checked={showLayers.density}
-                            onChange={(e) => setShowLayers(prev => ({ ...prev, density: e.target.checked }))}
+                            checked={showLayers.forecast}
+                            onChange={(e) => setShowLayers(prev => ({ ...prev, forecast: e.target.checked }))}
                             className="w-4 h-4 rounded border-0 text-teal-500 focus:ring-teal-400 focus:ring-2"
                             style={{ background: 'rgba(17, 75, 87, 0.8)', borderColor: 'rgba(14, 165, 163, 0.2)' }}
                           />
@@ -1202,23 +1206,21 @@ Color Scale:
             
             <MapController onMapReady={handleMapReady} />
             
-            {currentForecast && showLayers.density && (
-              <>
-                <SargassumOverlay
-                  data={currentForecast.concentration}
-                  opacity={compareMode ? opacity * 0.7 : opacity}
-                  bounds={GHANA_BOUNDS}
-                  renderMode={renderMode}
-                />
-                {compareMode && currentDay > 1 && forecastData[currentDay - 2] && (
-                  <SargassumOverlay
-                    data={forecastData[currentDay - 2].concentration}
-                    opacity={opacity * 0.5}
-                    bounds={GHANA_BOUNDS}
-                    renderMode={renderMode}
-                  />
-                )}
-              </>
+            {/* Current Forecast Overlay */}
+            {currentForecast && (
+              <ForecastOverlay
+                forecastData={currentForecast}
+                visible={showLayers.forecast}
+                opacity={opacity}
+              />
+            )}
+            
+            {currentForecast && showLayers.forecast && (
+              <ForecastOverlay
+                forecastData={currentForecast}
+                visible={true}
+                opacity={opacity}
+              />
             )}
             
             {showLayers.coastsnap && <CoastSnapPoints visible={showLayers.coastsnap} />}
@@ -1300,10 +1302,10 @@ Color Scale:
               <div className="flex justify-between items-center text-sm mb-4">
                 <div className="flex items-center space-x-3">
                   <span className="font-medium" style={{ color: 'var(--foam-white)' }}>
-                    Day {currentDay} of {forecastDays}
-                    {compareMode && currentDay > 1 && (
+                    Forecast {currentForecastIndex + 1} of {availableForecasts.length}
+                    {compareMode && currentForecastIndex > 0 && (
                       <span className="ml-2 px-2 py-1 text-xs rounded" style={{ background: 'rgba(94, 234, 212, 0.2)', color: 'var(--teal-foam)' }}>
-                        vs Day {currentDay - 1}
+                        vs Forecast {currentForecastIndex}
                       </span>
                     )}
                   </span>
@@ -1332,13 +1334,13 @@ Color Scale:
                 
                 {currentForecast && (
                   <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                    currentForecast.uncertainty === 'Low' 
+                    currentForecastIndex === 0 
                       ? 'confidence-high' :
-                    currentForecast.uncertainty === 'Medium' 
+                    currentForecastIndex < 3 
                       ? 'confidence-medium' :
                       'confidence-low'
                   }`}>
-                    {currentForecast.uncertainty} Confidence
+                    {currentForecastIndex === 0 ? 'High' : currentForecastIndex < 3 ? 'Medium' : 'Low'} Confidence
                   </span>
                 )}
               </div>
@@ -1363,32 +1365,32 @@ Color Scale:
                       className="absolute top-0 left-0 h-2 rounded-full transition-all duration-300"
                       style={{ 
                         background: 'linear-gradient(90deg, var(--teal-surface) 0%, var(--blue-surface) 100%)',
-                        width: `${(currentDay / forecastDays) * 100}%` 
+                        width: `${((currentForecastIndex + 1) / availableForecasts.length) * 100}%` 
                       }}
                     ></div>
                   </div>
                   
-                  {/* Day Buttons with 8pt Grid Spacing */}
+                  {/* Forecast Buttons with 8pt Grid Spacing */}
                   <div className="flex justify-between space-x-2">
-                    {Array.from({ length: forecastDays }, (_, i) => i + 1).map((day) => (
+                    {availableForecasts.map((forecast, index) => (
                       <button
-                        key={day}
-                        onClick={() => setCurrentDay(day)}
+                        key={index}
+                        onClick={() => setCurrentForecastIndex(index)}
                         className={`w-10 h-10 rounded-lg text-sm font-bold transition-all duration-200 border-2 ${
-                          day === currentDay 
+                          index === currentForecastIndex 
                             ? 'shadow-lg scale-110' 
-                            : day < currentDay
+                            : index < currentForecastIndex
                             ? 'hover:scale-105'
                             : 'hover:scale-105'
                         }`}
-                        style={day === currentDay 
+                        style={index === currentForecastIndex 
                           ? { 
                               background: 'linear-gradient(135deg, var(--teal-surface) 0%, var(--blue-surface) 100%)', 
                               color: 'var(--foam-white)', 
                               borderColor: 'var(--teal-surface)',
                               boxShadow: '0 4px 12px rgba(20, 184, 166, 0.25)'
                             }
-                          : day < currentDay
+                          : index < currentForecastIndex
                           ? { 
                               background: 'rgba(20, 184, 166, 0.4)', 
                               color: 'var(--teal-foam)', 
@@ -1400,9 +1402,9 @@ Color Scale:
                               borderColor: 'rgba(94, 234, 212, 0.2)' 
                             }
                         }
-                        title={`Day ${day} - ${forecastData[day - 1] ? new Date(forecastData[day - 1].date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}`}
+                        title={`Forecast ${index + 1} - ${new Date(forecast.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
                       >
-                        {day}
+                        {index + 1}
                       </button>
                     ))}
                   </div>
@@ -1449,8 +1451,8 @@ Color Scale:
                     />
                     <span className="text-xs" style={{ color: 'var(--teal-foam)' }}>
                       Compare
-                      {compareMode && currentDay > 1 && (
-                        <span className="ml-1 opacity-75">({currentDay} vs {currentDay - 1})</span>
+                      {compareMode && currentForecastIndex > 0 && (
+                        <span className="ml-1 opacity-75">({currentForecastIndex + 1} vs {currentForecastIndex})</span>
                       )}
                     </span>
                   </label>

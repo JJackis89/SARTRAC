@@ -1,0 +1,167 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-1.5, 5.2]
+      },
+      "properties": {
+        "particle_id": 1,
+        "time_hours": 0,
+        "status": "active",
+        "trajectory": [
+          {"lat": 5.2, "lon": -1.5, "time": 0},
+          {"lat": 5.25, "lon": -1.45, "time": 24},
+          {"lat": 5.3, "lon": -1.4, "time": 48},
+          {"lat": 5.35, "lon": -1.35, "time": 72}
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-1.3, 5.4]
+      },
+      "properties": {
+        "particle_id": 2,
+        "time_hours": 0,
+        "status": "active",
+        "trajectory": [
+          {"lat": 5.4, "lon": -1.3, "time": 0},
+          {"lat": 5.42, "lon": -1.25, "time": 24},
+          {"lat": 5.44, "lon": -1.2, "time": 48},
+          {"lat": 5.46, "lon": -1.15, "time": 72}
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-0.8, 5.1]
+      },
+      "properties": {
+        "particle_id": 3,
+        "time_hours": 0,
+        "status": "active",
+        "trajectory": [
+          {"lat": 5.1, "lon": -0.8, "time": 0},
+          {"lat": 5.15, "lon": -0.75, "time": 24},
+          {"lat": 5.2, "lon": -0.7, "time": 48},
+          {"lat": 5.25, "lon": -0.65, "time": 72}
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-2.1, 4.9]
+      },
+      "properties": {
+        "particle_id": 4,
+        "time_hours": 0,
+        "status": "active",
+        "trajectory": [
+          {"lat": 4.9, "lon": -2.1, "time": 0},
+          {"lat": 4.95, "lon": -2.05, "time": 24},
+          {"lat": 5.0, "lon": -2.0, "time": 48},
+          {"lat": 5.05, "lon": -1.95, "time": 72}
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-1.7, 5.6]
+      },
+      "properties": {
+        "particle_id": 5,
+        "time_hours": 0,
+        "status": "active",
+        "trajectory": [
+          {"lat": 5.6, "lon": -1.7, "time": 0},
+          {"lat": 5.62, "lon": -1.65, "time": 24},
+          {"lat": 5.64, "lon": -1.6, "time": 48},
+          {"lat": 5.66, "lon": -1.55, "time": 72}
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-1.0, 5.0]
+      },
+      "properties": {
+        "particle_id": 6,
+        "time_hours": 0,
+        "status": "active",
+        "trajectory": [
+          {"lat": 5.0, "lon": -1.0, "time": 0},
+          {"lat": 5.05, "lon": -0.95, "time": 24},
+          {"lat": 5.1, "lon": -0.9, "time": 48},
+          {"lat": 5.15, "lon": -0.85, "time": 72}
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-2.3, 5.1]
+      },
+      "properties": {
+        "particle_id": 7,
+        "time_hours": 0,
+        "status": "active",
+        "trajectory": [
+          {"lat": 5.1, "lon": -2.3, "time": 0},
+          {"lat": 5.12, "lon": -2.25, "time": 24},
+          {"lat": 5.14, "lon": -2.2, "time": 48},
+          {"lat": 5.16, "lon": -2.15, "time": 72}
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-0.5, 5.3]
+      },
+      "properties": {
+        "particle_id": 8,
+        "time_hours": 0,
+        "status": "active",
+        "trajectory": [
+          {"lat": 5.3, "lon": -0.5, "time": 0},
+          {"lat": 5.32, "lon": -0.45, "time": 24},
+          {"lat": 5.34, "lon": -0.4, "time": 48},
+          {"lat": 5.36, "lon": -0.35, "time": 72}
+        ]
+      }
+    }
+  ],
+  "metadata": {
+    "generation_time": "2025-10-12T18:00:00Z",
+    "forecast_hours": 72,
+    "windage": 0.035,
+    "particle_count": 8,
+    "model": "OpenDrift",
+    "version": "1.14.3",
+    "source": "SARTRAC automated forecast",
+    "data_sources": {
+      "ocean_currents": "NOAA RTOFS",
+      "winds": "NOAA GFS",
+      "detection": "Multi-satellite composite"
+    },
+    "forecast_region": {
+      "name": "Ghana Coast",
+      "bounds": [[-3.5, 4.5], [1.5, 11.5]]
+    }
+  }
+}
