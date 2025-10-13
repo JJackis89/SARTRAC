@@ -117,10 +117,40 @@ jobs:
           outputs/*.png
         retention-days: 30
 
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: forecast-${{ env.FORECAST_DATE }}
+        name: "Sargassum Forecast ${{ env.FORECAST_DATE }}"
+        body: |
+          ## Ghana Sargassum Forecast - ${{ env.FORECAST_DATE }}
+          
+          **Forecast Duration**: ${{ env.FORECAST_HOURS }} hours
+          **Generation Time**: ${{ github.run_started_at }}
+          **Workflow Run**: ${{ github.run_number }}
+          
+          ### Files Included:
+          - `forecast_${{ env.FORECAST_DATE }}.geojson` - Main forecast data
+          - Detection files from multiple satellites
+          - Forecast visualization map
+          
+          ### Usage:
+          This release contains real-time Sargassum forecast data for Ghana's coastline.
+          The forecast uses satellite detection data and oceanographic modeling.
+        files: |
+          outputs/forecast_${{ env.FORECAST_DATE }}.geojson
+          data/merged_detections_${{ env.FORECAST_DATE }}.geojson
+          outputs/map_${{ env.FORECAST_DATE }}.png
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Summary
       run: |
         echo "=== Forecast Complete ==="
         echo "Date: ${FORECAST_DATE}"
         echo "Files generated:"
         ls -la data/ outputs/
+        echo "GitHub Release: forecast-${FORECAST_DATE}"
         echo "========================"
