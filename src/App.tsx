@@ -757,8 +757,12 @@ Color Scale:
                               </div>
                               <div className="flex justify-between">
                                 <span>Status:</span>
-                                <span className={`font-medium ${currentForecast.isEmpty ? 'text-orange-400' : 'text-green-400'}`}>
-                                  {currentForecast.isEmpty ? 'No Detection' : 'Active'}
+                                <span className={`font-medium ${
+                                  currentForecast.isDemoData ? 'text-blue-400' : 
+                                  currentForecast.isEmpty ? 'text-orange-400' : 'text-green-400'
+                                }`}>
+                                  {currentForecast.isDemoData ? 'Demo Mode' : 
+                                   currentForecast.isEmpty ? 'No Detection' : 'Active'}
                                 </span>
                               </div>
                             </>
