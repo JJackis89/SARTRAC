@@ -1,13 +1,25 @@
 """
-Flask Cloud Run service for triggering Google Earth Engine OLCI processing.
+Flask Cloud Run service for SARTRAC - Ghana Sargassum Tracking and Forecasting System
+Supports both floating (OLCI) and beached (Sentinel-2) Sargassum detection
 """
 
 import os
 import json
 import logging
-from datetime import datetime
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
 from flask import Flask, request, jsonify
 import ee
+
+# Add scripts directory for imports
+sys.path.append(str(Path(__file__).parent.parent / 'scripts'))
+
+try:
+    from beached_detection_service import BeachedSargassumDetector
+except ImportError:
+    BeachedSargassumDetector = None
+    logging.warning("BeachedSargassumDetector not available")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -312,6 +324,85 @@ def run_detection():
         
     except Exception as e:
         logger.error(f"Request failed: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+@app.route('/beached', methods=['GET', 'POST'])
+def run_beached_detection():
+    """Endpoint to trigger beached Sargassum detection using Sentinel-2."""
+    try:
+        # Check if beached detection is available
+        if BeachedSargassumDetector is None:
+            return jsonify({'error': 'Beached detection service not available'}), 500
+        
+        # Get parameters
+        if request.method == 'GET':
+            date_str = request.args.get('date')
+            export_cloud = request.args.get('export', 'false').lower() == 'true'
+            threshold = float(request.args.get('threshold', '0.35'))
+        else:
+            data = request.get_json() or {}
+            date_str = data.get('date')
+            export_cloud = data.get('export', False)
+            threshold = float(data.get('threshold', 0.35))
+        
+        # Validate date
+        if not date_str:
+            return jsonify({'error': 'Missing date parameter (YYYY-MM-DD)'}), 400
+        
+        try:
+            datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+        
+        # Get configuration
+        model_asset = os.environ.get('BEACHED_MODEL_ASSET')
+        
+        logger.info(f"Processing beached detection for date: {date_str}")
+        
+        # Initialize Earth Engine if not already done
+        if not hasattr(app, 'ee_initialized'):
+            if not initialize_earth_engine():
+                return jsonify({'error': 'Failed to initialize Earth Engine'}), 500
+            app.ee_initialized = True
+        
+        # Initialize detector
+        detector = BeachedSargassumDetector(model_asset=model_asset)
+        detector.detection_threshold = threshold
+        
+        # Run detection
+        results = detector.detect_beached_sargassum(
+            target_date=date_str,
+            export_assets=export_cloud
+        )
+        
+        # Generate summary
+        summary = detector.get_detection_summary(results)
+        
+        response = {
+            'status': 'success',
+            'date': date_str,
+            'detection_summary': summary,
+            'threshold': threshold,
+            'export_requested': export_cloud,
+            'model_asset': model_asset,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        
+        # Add export task IDs if cloud export was requested
+        if export_cloud and hasattr(results, 'export_tasks'):
+            response['export_task_ids'] = results.export_tasks
+        
+        logger.info(f"Successfully completed beached detection for {date_str}")
+        logger.info(f"Summary: {summary}")
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Beached detection failed: {e}")
         return jsonify({
             'status': 'error',
             'error': str(e),

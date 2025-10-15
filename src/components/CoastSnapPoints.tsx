@@ -48,18 +48,35 @@ const coastSnapPoints = [
   }
 ];
 
-// Custom icon for CoastSnap points
+// Enhanced custom icon for CoastSnap points with soft shadows
 const coastSnapIcon = new L.Icon({
   iconUrl: 'data:image/svg+xml;base64,' + btoa(`
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-      <circle cx="12" cy="12" r="8" fill="#0ea5a3" stroke="#ffffff" stroke-width="2"/>
-      <circle cx="12" cy="12" r="4" fill="#ffffff"/>
-      <text x="12" y="16" text-anchor="middle" font-family="Arial" font-size="8" fill="#0ea5a3" font-weight="bold">CS</text>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28">
+      <defs>
+        <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+          <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="rgba(0,0,0,0.3)"/>
+        </filter>
+        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+          <feMerge> 
+            <feMergeNode in="coloredBlur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+      <!-- Outer ring with shadow -->
+      <circle cx="14" cy="14" r="10" fill="#0ea5a3" stroke="#ffffff" stroke-width="2.5" filter="url(#shadow)"/>
+      <!-- Inner ring with glow -->
+      <circle cx="14" cy="14" r="6" fill="#ffffff" filter="url(#glow)"/>
+      <!-- Center dot -->
+      <circle cx="14" cy="14" r="2" fill="#0ea5a3"/>
+      <!-- Enhanced label -->
+      <text x="14" y="18" text-anchor="middle" font-family="Arial, sans-serif" font-size="7" fill="#0ea5a3" font-weight="bold">CS</text>
     </svg>
   `),
-  iconSize: [24, 24],
-  iconAnchor: [12, 12],
-  popupAnchor: [0, -12],
+  iconSize: [28, 28],
+  iconAnchor: [14, 14],
+  popupAnchor: [0, -14],
 });
 
 interface CoastSnapPointsProps {

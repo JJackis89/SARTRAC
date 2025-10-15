@@ -1,0 +1,86 @@
+# Docker Compose for SARTRAC Production Deployment
+version: '3.8'
+
+services:
+  # SARTRAC Frontend Application
+  sartrac-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: sartrac-frontend
+    ports:
+      - "80:8080"
+    environment:
+      - NODE_ENV=production
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - sartrac-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sartrac.rule=Host(`sartrac.your-domain.com`)"
+      - "traefik.http.routers.sartrac.tls=true"
+      - "traefik.http.routers.sartrac.tls.certresolver=letsencrypt"
+
+  # Optional: Backend API service for satellite data processing
+  # sartrac-backend:
+  #   image: your-registry/sartrac-backend:latest
+  #   container_name: sartrac-backend
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     - DATABASE_URL=${DATABASE_URL}
+  #     - GEE_SERVICE_ACCOUNT=${GEE_SERVICE_ACCOUNT}
+  #   env_file:
+  #     - .env.backend
+  #   restart: unless-stopped
+  #   networks:
+  #     - sartrac-network
+
+  # Optional: Redis cache for satellite data
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: sartrac-redis
+  #   restart: unless-stopped
+  #   networks:
+  #     - sartrac-network
+  #   volumes:
+  #     - redis-data:/data
+
+  # Optional: Reverse proxy with SSL
+  # traefik:
+  #   image: traefik:v2.10
+  #   container_name: traefik
+  #   command:
+  #     - --api.dashboard=true
+  #     - --providers.docker=true
+  #     - --providers.docker.exposedbydefault=false
+  #     - --entrypoints.web.address=:80
+  #     - --entrypoints.websecure.address=:443
+  #     - --certificatesresolvers.letsencrypt.acme.email=your-email@domain.com
+  #     - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+  #     - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro
+  #     - traefik-ssl-certs:/letsencrypt
+  #   networks:
+  #     - sartrac-network
+
+networks:
+  sartrac-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+  traefik-ssl-certs:

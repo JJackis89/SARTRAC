@@ -19,6 +19,12 @@ export interface ForecastMetadata {
   generation_time: string;
 }
 
+export interface LoadingState {
+  isLoading: boolean;
+  error: string | null;
+  lastUpdated: Date | null;
+}
+
 export interface ForecastData {
   particles: ForecastParticle[];
   metadata: ForecastMetadata;
@@ -35,6 +41,7 @@ class ForecastService {
    */
   async getLatestForecast(): Promise<ForecastData | null> {
     try {
+      this.updateLoadingState({ isLoading: true, error: null });
       console.log('Fetching latest forecast...');
       
       // Get latest release
@@ -77,10 +84,21 @@ class ForecastService {
       this.cache.set(forecastDate, forecastData);
       
       console.log(`Loaded forecast for ${forecastDate} with ${forecastData.particles.length} particles`);
+      
+      this.updateLoadingState({ 
+        isLoading: false, 
+        error: null, 
+        lastUpdated: new Date() 
+      });
+      
       return forecastData;
 
     } catch (error) {
       console.error('Error fetching latest forecast:', error);
+      this.updateLoadingState({ 
+        isLoading: false, 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
       return null;
     }
   }
@@ -299,6 +317,87 @@ class ForecastService {
    */
   clearCache(): void {
     this.cache.clear();
+  }
+
+  // Loading state management
+  private loadingStateListeners: Array<(state: LoadingState) => void> = [];
+  private currentLoadingState: LoadingState = {
+    isLoading: false,
+    error: null,
+    lastUpdated: null
+  };
+
+  // Auto-refresh functionality
+  private autoRefreshInterval: NodeJS.Timeout | null = null;
+  private readonly AUTO_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
+
+  /**
+   * Subscribe to loading state changes
+   */
+  onLoadingStateChange(callback: (state: LoadingState) => void): () => void {
+    this.loadingStateListeners.push(callback);
+    // Immediately call with current state
+    callback(this.currentLoadingState);
+    
+    // Return unsubscribe function
+    return () => {
+      const index = this.loadingStateListeners.indexOf(callback);
+      if (index > -1) {
+        this.loadingStateListeners.splice(index, 1);
+      }
+    };
+  }
+
+  /**
+   * Update loading state and notify listeners
+   */
+  private updateLoadingState(newState: Partial<LoadingState>): void {
+    this.currentLoadingState = { ...this.currentLoadingState, ...newState };
+    this.loadingStateListeners.forEach(listener => {
+      try {
+        listener(this.currentLoadingState);
+      } catch (error) {
+        console.error('Error in loading state listener:', error);
+      }
+    });
+  }
+
+  /**
+   * Start auto-refresh
+   */
+  startAutoRefresh(): void {
+    if (this.autoRefreshInterval) {
+      clearInterval(this.autoRefreshInterval);
+    }
+    
+    this.autoRefreshInterval = setInterval(async () => {
+      try {
+        console.log('🔄 Auto-refreshing forecast data...');
+        await this.getLatestForecast();
+      } catch (error) {
+        console.error('Auto-refresh failed:', error);
+      }
+    }, this.AUTO_REFRESH_INTERVAL);
+    
+    console.log('✅ Auto-refresh started (every 30 minutes)');
+  }
+
+  /**
+   * Stop auto-refresh
+   */
+  stopAutoRefresh(): void {
+    if (this.autoRefreshInterval) {
+      clearInterval(this.autoRefreshInterval);
+      this.autoRefreshInterval = null;
+      console.log('⏹️ Auto-refresh stopped');
+    }
+  }
+
+  /**
+   * Get current loading state
+   */
+  getLoadingState(): LoadingState {
+    return { ...this.currentLoadingState };
   }
 }
 
