@@ -77,7 +77,7 @@ def create_map(roi_path, detections_paths=None, forecast_path=None, output_path=
             roi_mercator = roi.to_crs('EPSG:3857')
             
             # Add contextily basemap
-            ctx.add_basemap(ax, crs=roi.crs, source=ctx.providers.Stamen.Terrain, alpha=0.7)
+            ctx.add_basemap(ax, crs=roi.crs, source=ctx.providers.OpenStreetMap.Mapnik, alpha=0.7)
             
         except Exception as e:
             logger.warning(f"Failed to add basemap: {e}")
@@ -110,8 +110,9 @@ def create_map(roi_path, detections_paths=None, forecast_path=None, output_path=
             plt.savefig(output_path, dpi=300, bbox_inches='tight')
             logger.info(f"Saved map to {output_path}")
         
-        # Don't show in headless environments
-        if hasattr(plt, 'show'):
+        # Don't try to show in headless CI environments
+        import os
+        if os.environ.get('DISPLAY') or sys.platform == 'win32':
             plt.show()
         
         plt.close()

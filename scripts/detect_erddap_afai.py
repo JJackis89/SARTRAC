@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 """
-Generic ERDDAP detector for VIIRS/OLCI AFAI and MCI data.
+ERDDAP-based Sargassum screening using chlorophyll-a proxy.
+
+IMPORTANT — scientific caveat:
+The ERDDAP datasets used here expose **chlorophyll-a** (chlor_a), *not*
+raw reflectance bands needed for true AFAI/MCI indices.  Elevated chlorophyll
+is a necessary but not sufficient indicator of Sargassum.  Results should be
+treated as a *coarse screen* and validated with the GEE OLCI pipeline
+(detect_gee_olci.py) which computes actual AFAI and MCI.
+
+A spatial-clustering filter is applied to reduce isolated false positives:
+only detection pixels with ≥MIN_NEIGHBOURS neighbours within CLUSTER_RADIUS
+are kept.
+
 Supports configurable datasets via YAML config.
 """
 
@@ -8,6 +20,7 @@ import argparse
 import logging
 import sys
 from datetime import datetime
+from io import StringIO
 from pathlib import Path
 import yaml
 
@@ -106,18 +119,17 @@ class ERDDAPDetector:
             response.raise_for_status()
             
             # Parse CSV response
-            # Skip first line which contains units, start from actual header
+            # ERDDAP griddap CSV: line 0 = column names, line 1 = units, data from line 2+
             lines = response.text.strip().split('\n')
-            if len(lines) < 2:
+            if len(lines) < 3:
                 logger.warning("Empty or invalid response from ERDDAP")
                 return pd.DataFrame()
             
-            # Find header line (usually second line)
-            header_line = 1 if len(lines) > 1 else 0
-            data_lines = lines[header_line:]
+            # Keep header (line 0) and data (line 2+), skip units row (line 1)
+            data_lines = [lines[0]] + lines[2:]
             
             # Create DataFrame
-            df = pd.read_csv(pd.io.common.StringIO('\n'.join(data_lines)))
+            df = pd.read_csv(StringIO('\n'.join(data_lines)))
             
             logger.info(f"Retrieved {len(df)} raw data points")
             
@@ -174,29 +186,52 @@ class ERDDAPDetector:
         
         return df_clean
     
-    def apply_threshold(self, df, dataset_key, threshold):
+    def apply_threshold(self, df, dataset_key, threshold,
+                         cluster_radius=0.05, min_neighbours=2):
         """
-        Apply threshold to detect Sargassum.
-        
+        Apply threshold **and spatial-clustering filter** to detect Sargassum.
+
+        The clustering step keeps only pixels that have at least
+        *min_neighbours* other above-threshold pixels within
+        *cluster_radius* degrees.  This dramatically reduces isolated
+        false-positives from high-chlorophyll upwelling zones.
+
         Args:
             df: Cleaned DataFrame
             dataset_key: Dataset configuration key
-            threshold: Threshold value
-            
+            threshold: Chlorophyll-a threshold (mg/m³)
+            cluster_radius: Max distance (°) for neighbour check
+            min_neighbours: Minimum neighbours to keep a pixel
+
         Returns:
             DataFrame with detections only
         """
         if df.empty:
             return df
-        
+
         dataset = self.config[dataset_key]
         var = dataset['var']
-        
-        # Apply threshold
+        lat_var = dataset.get('lat', 'latitude')
+        lon_var = dataset.get('lon', 'longitude')
+
+        # Step 1 — simple threshold
         detections = df[df[var] >= threshold].copy()
-        
-        logger.info(f"Applied threshold {threshold}: {len(detections)} detections")
-        
+        logger.info(f"Threshold {threshold}: {len(detections)} raw detections")
+
+        if len(detections) < min_neighbours + 1:
+            return detections  # too few to cluster
+
+        # Step 2 — spatial-clustering filter
+        from scipy.spatial import cKDTree
+        coords = detections[[lon_var, lat_var]].values
+        tree = cKDTree(coords)
+        neighbours = tree.query_ball_point(coords, r=cluster_radius)
+        # -1 because each point is its own neighbour
+        keep = np.array([len(n) - 1 >= min_neighbours for n in neighbours])
+        detections = detections[keep].copy()
+        logger.info(f"After clustering (r={cluster_radius}°, min={min_neighbours}): "
+                    f"{len(detections)} detections")
+
         return detections
     
     def convert_to_points(self, df, dataset_key):
@@ -231,6 +266,8 @@ class ERDDAPDetector:
         # Add metadata
         gdf['source'] = dataset_key
         gdf['value'] = gdf[var]
+        gdf['detection_method'] = 'erddap_chlor_a_proxy'
+        gdf['caveat'] = 'chlorophyll proxy — validate with AFAI/MCI'
         
         logger.info(f"Created {len(gdf)} point geometries")
         
@@ -319,7 +356,7 @@ def main():
     parser = argparse.ArgumentParser(description='Detect Sargassum from ERDDAP data')
     parser.add_argument('--date', required=True, help='Date YYYY-MM-DD')
     parser.add_argument('--dataset', required=True, 
-                       choices=['viirs_chla', 'viirs_npp_chla', 's3a_olci_chla', 's3b_olci_chla', 'modis_aqua_chla'],
+                       choices=['viirs_chla', 'viirs_npp_chla', 's3a_olci_chla', 's3b_olci_chla'],
                        help='Dataset to query')
     parser.add_argument('--threshold', type=float, default=0.02,
                        help='Detection threshold')

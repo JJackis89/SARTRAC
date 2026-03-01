@@ -2,7 +2,6 @@ name: Daily Sargassum Forecast
 
 on:
   schedule:
-    # Run daily at 06:00 UTC
     - cron: '0 6 * * *'
   workflow_dispatch:
 
@@ -14,135 +13,159 @@ permissions:
 
 env:
   PYTHON_VERSION: '3.11'
+  # Default ocean-data URLs (overridden by repository secrets when set)
+  DEFAULT_CURRENTS_URL: 'https://tds.hycom.org/thredds/dodsC/GLBy0.08/latest'
 
 jobs:
   forecast:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Install dependencies
+    # ── System dependencies for OpenDrift / GDAL / Cartopy ──────────
+    - name: Install system dependencies
       run: |
-        python -m pip install --upgrade pip
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends \
+          libgdal-dev libgeos-dev libproj-dev proj-data proj-bin gdal-bin \
+          libhdf5-dev libnetcdf-dev gfortran libblas-dev liblapack-dev
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        GDAL_VERSION=$(gdal-config --version)
+        pip install "GDAL==${GDAL_VERSION}" || pip install GDAL
         pip install -r requirements.txt
 
+    # ── Environment variables ───────────────────────────────────────
     - name: Set forecast date and environment
       run: |
         echo "FORECAST_DATE=$(date -u +%Y-%m-%d)" >> $GITHUB_ENV
         echo "FORECAST_HOURS=72" >> $GITHUB_ENV
         echo "RELEASE_TAG=forecast-$(date -u +%Y-%m-%d)" >> $GITHUB_ENV
+        echo "DEFAULT_WINDS_URL=https://nomads.ncep.noaa.gov/dods/gfs_0p25/gfs$(date -u +%Y%m%d)/gfs_0p25_00z" >> $GITHUB_ENV
 
     - name: Create output directories
-      run: |
-        mkdir -p data outputs
+      run: mkdir -p data outputs
 
+    # ── Build ROI ───────────────────────────────────────────────────
     - name: Build ROI
       run: |
-        echo "Building Ghana 20nm offshore ROI..."
         python scripts/build_roi.py \
-          --out data/ghana_20nm.geojson \
-          --nm 20 \
-          --verbose
+          --out data/ghana_20nm.geojson --nm 20 --verbose
+
+    # ── Resolve ocean-data URLs ─────────────────────────────────────
+    - name: Resolve ocean data URLs
+      id: ocean_urls
+      env:
+        SECRET_CURRENTS: ${{ secrets.CURRENTS_URL }}
+        SECRET_WINDS: ${{ secrets.WINDS_URL }}
+      run: |
+        if [ -n "$SECRET_CURRENTS" ]; then
+          echo "RESOLVED_CURRENTS_URL=$SECRET_CURRENTS" >> $GITHUB_ENV
+          echo "currents_source=secret" >> $GITHUB_OUTPUT
+        else
+          echo "RESOLVED_CURRENTS_URL=$DEFAULT_CURRENTS_URL" >> $GITHUB_ENV
+          echo "currents_source=default-hycom" >> $GITHUB_OUTPUT
+        fi
+        if [ -n "$SECRET_WINDS" ]; then
+          echo "RESOLVED_WINDS_URL=$SECRET_WINDS" >> $GITHUB_ENV
+          echo "winds_source=secret" >> $GITHUB_OUTPUT
+        else
+          echo "RESOLVED_WINDS_URL=$DEFAULT_WINDS_URL" >> $GITHUB_ENV
+          echo "winds_source=default-gfs" >> $GITHUB_OUTPUT
+        fi
 
     - name: Test ocean data connectivity
-      env:
-        CURRENTS_URL: ${{ secrets.CURRENTS_URL }}
-        WINDS_URL: ${{ secrets.WINDS_URL }}
-      run: |
-        echo "Testing ocean data sources..."
-        echo "CURRENTS_URL: ${CURRENTS_URL:-'Not configured'}"
-        echo "WINDS_URL: ${WINDS_URL:-'Not configured'}"
-        
-        # Test connectivity if URLs are provided
-        if [ -n "$CURRENTS_URL" ]; then
-          echo "Testing currents data access..."
-          curl -I "$CURRENTS_URL" || echo "Warning: CURRENTS_URL not accessible"
-        fi
-        
-        if [ -n "$WINDS_URL" ]; then
-          echo "Testing winds data access..."
-          curl -I "$WINDS_URL" || echo "Warning: WINDS_URL not accessible"
-        fi
-
-    - name: Run detections
       continue-on-error: true
       run: |
-        echo "Running satellite detections..."
-        for dataset in viirs_chla s3a_olci_chla s3b_olci_chla; do
-          echo "Detecting $dataset..."
+        echo "Currents → ${RESOLVED_CURRENTS_URL}"
+        curl -sI --max-time 15 "${RESOLVED_CURRENTS_URL}" | head -3 || echo "⚠ currents unreachable"
+        echo "Winds → ${RESOLVED_WINDS_URL}"
+        curl -sI --max-time 15 "${RESOLVED_WINDS_URL}" | head -3 || echo "⚠ winds unreachable"
+
+    # ── Detection: ERDDAP chlorophyll (always available) ────────────
+    - name: Run ERDDAP detections
+      continue-on-error: true
+      run: |
+        for ds in viirs_chla s3a_olci_chla s3b_olci_chla; do
+          echo "  → $ds"
           python scripts/detect_erddap_afai.py \
-            --date ${FORECAST_DATE} \
-            --dataset $dataset \
-            --threshold 0.5 \
+            --date "$FORECAST_DATE" --dataset "$ds" --threshold 0.5 \
             --roi data/ghana_20nm.geojson \
-            --out data/${dataset}_${FORECAST_DATE}.geojson \
-            --verbose || echo "Failed to detect $dataset"
+            --out "data/${ds}_${FORECAST_DATE}.geojson" \
+            --verbose || echo "  ⚠ $ds failed"
         done
 
+    # ── Detection: GEE OLCI AFAI/MCI (if credentials present) ──────
+    - name: Run GEE OLCI detection
+      continue-on-error: true
+      env:
+        EE_SERVICE_ACCOUNT: ${{ secrets.EE_SERVICE_ACCOUNT }}
+        EE_PRIVATE_KEY: ${{ secrets.EE_PRIVATE_KEY }}
+      run: |
+        if [ -n "$EE_SERVICE_ACCOUNT" ]; then
+          echo "Running GEE OLCI AFAI/MCI detection..."
+          python scripts/detect_gee_olci.py \
+            --date "$FORECAST_DATE" \
+            --out "data/gee_olci_${FORECAST_DATE}.geojson" \
+            --verbose || echo "⚠ GEE OLCI detection failed"
+        else
+          echo "ℹ Skipping GEE detection (EE_SERVICE_ACCOUNT not configured)"
+        fi
+
+    # ── Merge all detection sources ─────────────────────────────────
     - name: Merge detections
       run: |
-        echo "Merging detection files..."
         python scripts/merge_geojson_points.py \
           data/*_${FORECAST_DATE}.geojson \
-          --out data/merged_detections_${FORECAST_DATE}.geojson \
-          --date ${FORECAST_DATE} \
+          --out "data/merged_detections_${FORECAST_DATE}.geojson" \
+          --date "$FORECAST_DATE" \
           --roi data/ghana_20nm.geojson \
-          --verbose || echo '{"type": "FeatureCollection", "features": []}' > data/merged_detections_${FORECAST_DATE}.geojson
+          --verbose \
+        || echo '{"type":"FeatureCollection","features":[]}' \
+             > "data/merged_detections_${FORECAST_DATE}.geojson"
 
+    # ── Drift forecast ──────────────────────────────────────────────
     - name: Run drift forecast
-      env:
-        CURRENTS_URL: ${{ secrets.CURRENTS_URL }}
-        WINDS_URL: ${{ secrets.WINDS_URL }}
       run: |
-        echo "Running Sargassum drift forecast..."
-        
-        # Build arguments for ocean/wind data
         args=""
-        if [ -n "$CURRENTS_URL" ]; then
-          args="$args --currents-url $CURRENTS_URL"
-        fi
-        if [ -n "$WINDS_URL" ]; then
-          args="$args --winds-url $WINDS_URL"
-        fi
-        
-        python scripts/forecast_opendrift.py \
-          --detections data/merged_detections_${FORECAST_DATE}.geojson \
-          --out outputs/forecast_${FORECAST_DATE}.geojson \
-          --hours ${FORECAST_HOURS} \
-          --windage 0.01 \
-          --particles 5 \
-          --roi data/ghana_20nm.geojson \
-          $args \
-          --verbose
+        [ -n "$RESOLVED_CURRENTS_URL" ] && args="$args --currents-url $RESOLVED_CURRENTS_URL"
+        [ -n "$RESOLVED_WINDS_URL" ]    && args="$args --winds-url $RESOLVED_WINDS_URL"
 
+        python scripts/forecast_opendrift.py \
+          --detections "data/merged_detections_${FORECAST_DATE}.geojson" \
+          --out "outputs/forecast_${FORECAST_DATE}.geojson" \
+          --hours "$FORECAST_HOURS" --windage 0.01 --particles 5 \
+          --roi data/ghana_20nm.geojson \
+          $args --verbose
+
+    # ── Static map (optional) ───────────────────────────────────────
     - name: Generate map
       continue-on-error: true
       run: |
-        echo "Generating forecast map..."
         python scripts/render_map.py \
           --roi data/ghana_20nm.geojson \
           --detections data/*_${FORECAST_DATE}.geojson \
-          --forecast outputs/forecast_${FORECAST_DATE}.geojson \
-          --out outputs/map_${FORECAST_DATE}.png \
-          --title "Ghana Sargassum Forecast - ${FORECAST_DATE}" \
+          --forecast "outputs/forecast_${FORECAST_DATE}.geojson" \
+          --out "outputs/map_${FORECAST_DATE}.png" \
+          --title "Ghana Sargassum Forecast — ${FORECAST_DATE}" \
           --verbose
 
+    # ── Ensure output exists ────────────────────────────────────────
     - name: Prepare release files
       run: |
-        echo "Preparing files for release..."
         ls -la data/ outputs/
-        
-        # Ensure forecast file exists
         if [ ! -f "outputs/forecast_${FORECAST_DATE}.geojson" ]; then
-          echo "Warning: Forecast file not found, creating placeholder..."
-          echo '{"type": "FeatureCollection", "features": [], "properties": {"date": "'${FORECAST_DATE}'", "status": "no_data"}}' > outputs/forecast_${FORECAST_DATE}.geojson
+          echo '{"type":"FeatureCollection","features":[],"properties":{"date":"'"${FORECAST_DATE}"'","status":"no_data"}}' \
+            > "outputs/forecast_${FORECAST_DATE}.geojson"
         fi
 
     - name: Upload artifacts
@@ -155,124 +178,61 @@ jobs:
           outputs/*.png
         retention-days: 30
 
-    - name: Check if release exists
-      id: check_release
+    # ── Release ─────────────────────────────────────────────────────
+    - name: Delete existing release if present
       continue-on-error: true
-      run: |
-        # Check if tag already exists
-        if git rev-parse "${{ env.RELEASE_TAG }}" >/dev/null 2>&1; then
-          echo "exists=true" >> $GITHUB_OUTPUT
-          echo "Tag ${{ env.RELEASE_TAG }} already exists"
-        else
-          echo "exists=false" >> $GITHUB_OUTPUT
-          echo "Tag ${{ env.RELEASE_TAG }} does not exist"
-        fi
-
-    - name: Delete existing tag if exists
-      if: steps.check_release.outputs.exists == 'true'
-      run: |
-        echo "Deleting existing tag: ${{ env.RELEASE_TAG }}"
-        git tag -d "${{ env.RELEASE_TAG }}" || echo "Local tag not found"
-        git push origin --delete "${{ env.RELEASE_TAG }}" || echo "Remote tag not found"
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Debug GitHub Permissions
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        echo "=== GitHub CLI Debug Information ==="
-        echo "Repository: ${{ github.repository }}"
-        echo "Actor: ${{ github.actor }}"
-        echo "Event: ${{ github.event_name }}"
-        
-        echo "Checking GitHub CLI authentication..."
-        gh auth status || echo "GitHub CLI auth failed"
-        
-        echo "Testing repository access..."
-        gh repo view ${{ github.repository }} --json name,permissions || echo "Cannot view repository"
-        
-        echo "Testing release permissions..."
-        gh release list --repo ${{ github.repository }} --limit 1 || echo "Cannot list releases"
-        
-        echo "=== End Debug ==="
+        gh release delete "$RELEASE_TAG" --yes 2>/dev/null || true
+        git push origin --delete "$RELEASE_TAG" 2>/dev/null || true
 
-    - name: Create GitHub Release with CLI
+    - name: Create GitHub Release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        echo "Creating release using GitHub CLI..."
-        
-        # Create release notes
-        cat > release_notes.md << 'EOF'
-        ## Ghana Sargassum Forecast - ${{ env.FORECAST_DATE }}
-        
-        **Forecast Duration**: ${{ env.FORECAST_HOURS }} hours (3 days)
-        **Generation Time**: $(date -u)
-        **Workflow Run**: #${{ github.run_number }}
-        **Status**: ✅ Complete
-        
-        ### 📊 Forecast Details
-        - **Region**: Ghana coastline (0-20 nautical miles offshore)
-        - **Model**: OpenDrift oceanographic model
-        - **Data Sources**: VIIRS, Sentinel-3 OLCI satellite data
-        - **Ocean Data**: NOAA RTOFS currents, GFS winds
-        
-        ### 📁 Files Included
-        - `forecast_${{ env.FORECAST_DATE }}.geojson` - Main drift forecast (72h)
-        - `merged_detections_${{ env.FORECAST_DATE }}.geojson` - Satellite detection points
-        - `map_${{ env.FORECAST_DATE }}.png` - Forecast visualization map
-        
-        ### 🌊 Usage Instructions
-        1. **Web Application**: Load the forecast file in the React visualization app
-        2. **GIS Software**: Import GeoJSON files into QGIS, ArcGIS, or similar tools  
-        3. **API Integration**: Use the forecast data in custom applications
-        
-        ### 🔍 Data Quality
-        - Confidence decreases over forecast duration (Day 1: High, Day 2-3: Medium)
-        - Weather conditions and ocean currents affect forecast accuracy
-        - Real-time satellite data used for initial conditions
-        
-        ---
-        
-        **🔄 Next forecast**: Tomorrow at 06:00 UTC  
-        **🌐 Visualization**: Load this data in the SARTRAC web application  
-        **📧 Support**: Contact the SARTRAC team for questions about this forecast
+        FF="outputs/forecast_${FORECAST_DATE}.geojson"
+        DF="data/merged_detections_${FORECAST_DATE}.geojson"
+        MF="outputs/map_${FORECAST_DATE}.png"
+
+        PARTICLES=$(python3 -c "import json; print(len(json.load(open('$FF')).get('features',[])))" 2>/dev/null || echo "?")
+        DETECTIONS=$(python3 -c "import json; print(len(json.load(open('$DF')).get('features',[])))" 2>/dev/null || echo "?")
+
+        cat > release_notes.md <<EOF
+        ## Ghana Sargassum Forecast — ${FORECAST_DATE}
+
+        | Detail | Value |
+        |--------|-------|
+        | Duration | ${FORECAST_HOURS} h (3 days) |
+        | Detections | ${DETECTIONS} points |
+        | Forecast particles | ${PARTICLES} |
+        | Currents source | ${{ steps.ocean_urls.outputs.currents_source }} |
+        | Winds source | ${{ steps.ocean_urls.outputs.winds_source }} |
+        | Run | #${{ github.run_number }} |
+
+        ### Files
+        - \`forecast_${FORECAST_DATE}.geojson\` — 72 h drift forecast
+        - \`merged_detections_${FORECAST_DATE}.geojson\` — detection points
+        - \`map_${FORECAST_DATE}.png\` — static map
+
+        **Next forecast:** tomorrow 06:00 UTC
         EOF
-        
-        # Delete existing release if it exists
-        gh release delete "${{ env.RELEASE_TAG }}" --yes || echo "Release doesn't exist"
-        
-        # Create new release
-        gh release create "${{ env.RELEASE_TAG }}" \
-          --title "Sargassum Forecast ${{ env.FORECAST_DATE }}" \
-          --notes-file release_notes.md \
-          --latest \
-          outputs/forecast_${{ env.FORECAST_DATE }}.geojson \
-          data/merged_detections_${{ env.FORECAST_DATE }}.geojson \
-          outputs/map_${{ env.FORECAST_DATE }}.png \
-          || echo "Release creation failed, but continuing workflow"
 
-    - name: Workflow Summary
-      run: |
-        echo "=== Ghana Sargassum Forecast Complete ==="
-        echo "📅 Date: ${FORECAST_DATE}"
-        echo "⏱️  Duration: ${FORECAST_HOURS} hours" 
-        echo "🏷️  Release: ${RELEASE_TAG}"
-        echo "📊 Files generated:"
-        find data/ outputs/ -name "*${FORECAST_DATE}*" -type f | while read file; do
-          size=$(du -h "$file" | cut -f1)
-          echo "  📄 $file ($size)"
-        done
-        echo "🔗 Release URL: https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
-        echo "✅ Workflow completed successfully!"
-        echo "============================================="
+        FILES=""
+        [ -f "$FF" ] && FILES="$FILES $FF"
+        [ -f "$DF" ] && FILES="$FILES $DF"
+        [ -f "$MF" ] && FILES="$FILES $MF"
 
-    - name: Update latest forecast symlink
+        gh release create "$RELEASE_TAG" \
+          --title "Sargassum Forecast ${FORECAST_DATE}" \
+          --notes-file release_notes.md --latest \
+          $FILES \
+        || echo "⚠ Release creation failed"
+
+    - name: Workflow summary
       run: |
-        # Create symlinks for latest forecast (for easy web app integration)
-        cd outputs/
-        ln -sf forecast_${FORECAST_DATE}.geojson latest_forecast.geojson
-        cd ../data/
-        ln -sf merged_detections_${FORECAST_DATE}.geojson latest_detections.geojson
-        echo "Updated latest forecast symlinks"
+        echo "=== Forecast complete ==="
+        echo "Date:    ${FORECAST_DATE}"
+        echo "Release: ${RELEASE_TAG}"
+        find data/ outputs/ -name "*${FORECAST_DATE}*" -type f -exec du -h {} \;
+        echo "https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"

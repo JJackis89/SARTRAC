@@ -1,33 +1,34 @@
-# Core dependencies - Updated for professional pipeline
+# Core dependencies — SARTRAC daily forecast pipeline
+# NOTE: System packages required on Ubuntu:
+#   sudo apt-get install libgdal-dev libgeos-dev libproj-dev proj-data gdal-bin \
+#     libhdf5-dev libnetcdf-dev gfortran libblas-dev liblapack-dev
 geopandas==1.1.1
 shapely==2.0.6
 pyproj==3.6.1
 pandas==2.1.3
 numpy==1.25.2
 requests==2.31.0
+scipy>=1.11.0
 
 # Geospatial data handling
 xarray==2023.10.1
 netCDF4==1.7.2
 rasterio==1.3.9
 
-# Professional oceanographic modeling
+# Oceanographic drift modelling
 opendrift==1.14.3
 psutil==5.9.8
 
-# Professional visualization
+# QA map rendering (render_map.py)
 matplotlib==3.8.1
 contextily==1.6.2
-cartopy==0.24.1
-folium==0.20.0
 
 # Configuration
 pyyaml==6.0.1
 
-# Google Earth Engine and Cloud
-earthengine-api==0.1.374
-google-cloud-storage==2.10.0
-flask==2.3.3
+# Google Earth Engine (optional — only needed for GEE OLCI detection)
+# Uncomment when GEE_SERVICE_ACCOUNT_KEY secret is configured:
+# earthengine-api==0.1.374
 
 # Development and testing
 pytest==7.4.3

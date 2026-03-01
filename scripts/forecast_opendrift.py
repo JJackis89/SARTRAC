@@ -84,7 +84,7 @@ class SargassumForecaster:
         
         # Add fallback readers if needed
         if 'currents' not in self.readers_added:
-            logger.warning("Adding fallback constant current reader")
+            logger.warning("Adding fallback constant current reader — forecast accuracy will be reduced")
             # Representative westward surface current for Gulf of Guinea
             fallback_current = reader_constant.Reader({
                 'x_sea_water_velocity': -0.3,  # m/s westward
@@ -95,7 +95,7 @@ class SargassumForecaster:
             readers_added += 1
         
         if 'winds' not in self.readers_added:
-            logger.warning("Adding fallback constant wind reader")
+            logger.warning("Adding fallback constant wind reader — forecast accuracy will be reduced")
             # Representative SW winds for Gulf of Guinea
             fallback_winds = reader_constant.Reader({
                 'x_wind': -3.0,  # m/s
@@ -302,8 +302,11 @@ class SargassumForecaster:
                 for key, value in metadata.items():
                     gdf[key] = value
             
-            # Add forecast timestamp
-            gdf['forecast_time'] = datetime.utcnow().isoformat()
+            # Add forecast timestamp and data source info
+            from datetime import timezone
+            gdf['forecast_time'] = datetime.now(timezone.utc).isoformat()
+            gdf['data_source'] = ','.join(self.readers_added)
+            gdf['uses_fallback'] = any('fallback' in r for r in self.readers_added)
             
             # Ensure output directory exists
             output_path = Path(output_path)
@@ -384,8 +387,10 @@ def main():
                 "type": "FeatureCollection",
                 "features": [],
                 "properties": {
-                    "forecast_time": datetime.utcnow().isoformat(),
-                    "message": "No detection points found for forecast"
+                    "forecast_time": datetime.now(timezone.utc).isoformat() if 'timezone' in dir() else datetime.utcnow().isoformat(),
+                    "message": "No detection points found for forecast",
+                    "data_source": "none",
+                    "uses_fallback": False
                 }
             }
             

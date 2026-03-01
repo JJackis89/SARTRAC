@@ -470,6 +470,28 @@ select:focus-visible {
   }
 }
 
+/* Drift vector pulse animation */
+@keyframes drift-pulse {
+  0%, 100% {
+    opacity: 0.7;
+    transform: scaleX(1) rotate(var(--rotation, 0deg));
+  }
+  50% {
+    opacity: 1;
+    transform: scaleX(1.15) rotate(var(--rotation, 0deg));
+  }
+}
+
+/* Overlay label reset styles */
+.drift-vector-arrow,
+.uncertainty-label,
+.uncertainty-hatch,
+.bathymetry-label,
+.bathymetry-shelf-label {
+  background: transparent !important;
+  border: none !important;
+}
+
 /* High contrast mode support */
 @media (prefers-contrast: high) {
   :root {
@@ -831,5 +853,75 @@ select:focus-visible {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Mobile responsive overrides (<768px) ─────────────────────────── */
+@media (max-width: 767px) {
+  /* Header: compact height, smaller padding */
+  header[role="banner"] {
+    height: 3rem !important;
+  }
+  header[role="banner"] .flex.items-center.justify-between {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+  /* Hide header title text on very small screens */
+  .mobile-hide-title {
+    display: none !important;
+  }
+
+  /* ControlDrawer: full-width overlay on mobile */
+  .control-drawer-mobile {
+    width: 100vw !important;
+    max-width: 100vw !important;
+  }
+
+  /* TimelinePlayer: wider + positioned to fill bottom */
+  .timeline-player-mobile {
+    left: 0.5rem !important;
+    right: 0.5rem !important;
+    bottom: 0.5rem !important;
+    width: auto !important;
+  }
+  .timeline-player-mobile .rounded-xl {
+    width: 100% !important;
+  }
+
+  /* AlertPanel: below header, narrower */
+  .alert-panel-mobile {
+    top: 3.5rem !important;
+    right: 0.5rem !important;
+    left: 0.5rem !important;
+    max-width: none !important;
+  }
+
+  /* MapUtilities: smaller buttons, tighter spacing */
+  .map-utilities {
+    top: 8px;
+    right: 8px;
+    gap: 4px;
+  }
+  .map-utility-btn {
+    width: 32px;
+    height: 32px;
+  }
+  .compass-rose {
+    width: 28px;
+    height: 28px;
+    font-size: 10px;
+  }
+
+  /* Scale bar: shift left to avoid overlap */
+  .scale-bar-mobile {
+    left: 0.5rem !important;
+    bottom: 5rem !important;
+  }
+}
+
+/* ── Tablet tweaks (768px–1024px) ─────────────────────────────────── */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .map-utilities {
+    gap: 6px;
   }
 }

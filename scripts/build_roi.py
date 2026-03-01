@@ -50,12 +50,13 @@ def create_simple_ghana_polygon():
     from shapely.geometry import Polygon
     
     # Simplified Ghana boundary coordinates (approximate)
+    # Ghana spans roughly 3.25°W to 1.2°E longitude, 4.7°N to 11.2°N latitude
     ghana_coords = [
-        (-3.2, 4.7),  # Southwest corner
-        (-1.2, 4.7),  # Southeast corner
-        (-1.2, 11.2), # Northeast corner
-        (-3.2, 11.2), # Northwest corner
-        (-3.2, 4.7)   # Close polygon
+        (-3.25, 4.7),  # Southwest corner
+        (1.2, 4.7),   # Southeast corner
+        (1.2, 11.2),  # Northeast corner
+        (-3.25, 11.2), # Northwest corner
+        (-3.25, 4.7)   # Close polygon
     ]
     
     return Polygon(ghana_coords)
@@ -124,8 +125,12 @@ def clip_to_water_only(offshore_band):
         Water-only offshore band
     """
     try:
-        # Load world land data
-        world = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
+        # Load world land data (compatible with geopandas >= 1.0)
+        try:
+            world = gpd.read_file("https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip")
+        except Exception:
+            logger.warning("Could not download land data for water clipping, skipping")
+            return offshore_band
         
         # Get bounding box of offshore band to limit processing
         bounds = offshore_band.bounds
