@@ -2,9 +2,14 @@
 """
 Detect Sargassum from Sentinel-3 OLCI via Google Earth Engine.
 
-Computes true AFAI (Alternative Floating Algae Index) and MCI (Maximum
-Chlorophyll Index) from raw reflectance bands — the scientifically correct
-indices for floating Sargassum detection.
+Computes AFAI (Alternative Floating Algae Index) and MCI (Maximum
+Chlorophyll Index) from OLCI Level-1 TOA radiance bands available in
+the GEE catalog (COPERNICUS/S3/OLCI).
+
+OLCI band mapping (centre wavelengths):
+  Oa08_radiance → 665 nm     Oa10_radiance → 681 nm
+  Oa11_radiance → 709 nm     Oa12_radiance → 754 nm
+  Oa17_radiance → 865 nm     Oa21_radiance → 1020 nm
 
 Requires:
   - earthengine-api  (pip install earthengine-api)
@@ -79,6 +84,7 @@ def detect_olci(date_str: str, lookback: int = 3) -> dict:
     Run AFAI + MCI detection on Sentinel-3 OLCI for *date_str*.
     If no images found, tries up to *lookback* days back.
 
+    Uses COPERNICUS/S3/OLCI (Level-1 TOA radiance).
     Returns a GeoJSON FeatureCollection dict with detection centroids.
     """
     import ee
@@ -93,7 +99,7 @@ def detect_olci(date_str: str, lookback: int = 3) -> dict:
         start = ee.Date(check_str)
         end = start.advance(1, 'day')
 
-        col = (ee.ImageCollection('COPERNICUS/S3/OLCI/OL_2_WFR')
+        col = (ee.ImageCollection('COPERNICUS/S3/OLCI')
                .filterDate(start, end)
                .filterBounds(roi))
 
@@ -106,43 +112,49 @@ def detect_olci(date_str: str, lookback: int = 3) -> dict:
         logger.warning(f'No OLCI images found in {lookback+1} days — returning empty collection')
         return _empty_fc(date_str)
 
-    # Quality mask
+    # Quality mask — use quality_flags band
     def quality_mask(img):
         qf = img.select('quality_flags').toInt()
-        cloud = qf.bitwiseAnd(1 << 18).eq(0)
-        glint = qf.bitwiseAnd(1 << 21).eq(0)
-        ac_fail = qf.bitwiseAnd(1 << 24).eq(0)
-        mask = cloud.And(glint).And(ac_fail)
+        # Bit 27 = land, Bit 24 = invalid, Bit 25 = bright (cloud/glint)
+        land    = qf.bitwiseAnd(1 << 27).eq(0)
+        invalid = qf.bitwiseAnd(1 << 24).eq(0)
+        bright  = qf.bitwiseAnd(1 << 25).eq(0)
+        mask = land.And(invalid).And(bright)
 
-        # Valid reflectance range
-        for band in ['Rrs_665', 'Rrs_681', 'Rrs_709', 'Rrs_754', 'Rrs_865', 'Rrs_1020']:
-            b = img.select(band)
-            mask = mask.And(b.gt(0)).And(b.lt(0.1))
+        # Require positive radiance in key bands
+        for band in ['Oa08_radiance', 'Oa10_radiance', 'Oa11_radiance',
+                      'Oa12_radiance', 'Oa17_radiance', 'Oa21_radiance']:
+            mask = mask.And(img.select(band).gt(0))
 
         return img.updateMask(mask)
 
     col = col.map(quality_mask)
 
-    # AFAI = Rrs_865 − baseline(Rrs_665, Rrs_1020)
+    # AFAI = L_865 − baseline(L_665, L_1020)
+    # Using radiance: same spectral shape analysis, thresholds scaled
     def compute_afai(img):
-        r665 = img.select('Rrs_665')
-        r865 = img.select('Rrs_865')
-        r1020 = img.select('Rrs_1020')
-        baseline = r665.add(r1020.subtract(r665).multiply((865 - 665) / (1020 - 665)))
+        r665  = img.select('Oa08_radiance')   # 665 nm
+        r865  = img.select('Oa17_radiance')   # 865 nm
+        r1020 = img.select('Oa21_radiance')   # 1020 nm
+        weight = (865.0 - 665.0) / (1020.0 - 665.0)
+        baseline = r665.add(r1020.subtract(r665).multiply(weight))
         return r865.subtract(baseline).rename('afai')
 
-    # MCI = Rrs_709 − baseline(Rrs_681, Rrs_754)
+    # MCI = L_709 − baseline(L_681, L_754)
     def compute_mci(img):
-        r681 = img.select('Rrs_681')
-        r709 = img.select('Rrs_709')
-        r754 = img.select('Rrs_754')
-        baseline = r681.add(r754.subtract(r681).multiply((709 - 681) / (754 - 681)))
+        r681 = img.select('Oa10_radiance')   # 681 nm
+        r709 = img.select('Oa11_radiance')   # 709 nm
+        r754 = img.select('Oa12_radiance')   # 754 nm
+        weight = (709.0 - 681.0) / (754.0 - 681.0)
+        baseline = r681.add(r754.subtract(r681).multiply(weight))
         return r709.subtract(baseline).rename('mci')
 
     afai_max = col.map(compute_afai).max().clip(roi)
-    mci_max = col.map(compute_mci).max().clip(roi)
+    mci_max  = col.map(compute_mci).max().clip(roi)
 
-    detect = afai_max.gte(0.02).Or(mci_max.gte(0.005)).rename('detect')
+    # Radiance-based thresholds (empirical; radiance units ~mW/m²/sr/nm)
+    # AFAI > 2.0 or MCI > 1.0 indicates floating vegetation
+    detect = afai_max.gte(2.0).Or(mci_max.gte(1.0)).rename('detect')
 
     # Vectorise detection pixels → centroids
     vectors = (detect.selfMask()
@@ -157,8 +169,8 @@ def detect_olci(date_str: str, lookback: int = 3) -> dict:
     vectors = vectors.map(lambda f: f.set({
         'date': date_str,
         'source': 'gee_olci_afai_mci',
-        'afai_threshold': 0.02,
-        'mci_threshold': 0.0,
+        'afai_threshold': 2.0,
+        'mci_threshold': 1.0,
     }))
 
     n = vectors.size().getInfo()

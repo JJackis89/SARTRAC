@@ -120,7 +120,7 @@ jobs:
           echo "Running GEE OLCI AFAI/MCI detection..."
           python scripts/detect_gee_olci.py \
             --date "$FORECAST_DATE" \
-            --lookback 3 \
+            --lookback 7 \
             --out "data/gee_olci_${FORECAST_DATE}.geojson" \
             --verbose || echo "⚠ GEE OLCI detection failed"
         else
