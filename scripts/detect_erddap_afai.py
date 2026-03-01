@@ -401,7 +401,8 @@ def main():
     parser = argparse.ArgumentParser(description='Detect Sargassum from ERDDAP data')
     parser.add_argument('--date', required=True, help='Date YYYY-MM-DD')
     parser.add_argument('--dataset', required=True, 
-                       choices=['s3a_olci_chla', 's3b_olci_chla', 'viirs_chla',\n                                's3a_olci_sector'],
+                       choices=['s3a_olci_chla', 's3b_olci_chla', 'viirs_chla',
+                                's3a_olci_sector'],
                        help='Dataset to query (s3a/s3b recommended; viirs is legacy)')
     parser.add_argument('--threshold', type=float, default=0.02,
                        help='Detection threshold')
