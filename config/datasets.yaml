@@ -1,91 +1,68 @@
 # ERDDAP Dataset Configuration for Sargassum Detection
 # Real dataset IDs found on NOAA CoastWatch ERDDAP servers
+#
+# NOTE: VIIRS NOAA-20 daily chlorophyll (noaacwNPPN20VIIRSchlociDaily) stopped
+# receiving data in Sept 2021 and uses a different variable name (chl_oci).
+# It has been replaced with active Sentinel-3 datasets below.
 
-# VIIRS Daily Global 4km Chlorophyll (can be used for AFAI calculation)
-viirs_chla:
-  server: "https://coastwatch.noaa.gov/erddap"
-  dataset_id: "noaacwNPPN20VIIRSchlociDaily"  # NOAA-20 VIIRS Chlorophyll Daily
-  var: "chlor_a"  # Base chlorophyll variable (for AFAI calculation)
-  lat: "latitude"
-  lon: "longitude"
-  time: "time"
-  default_bbox: [-4.5, 2.5, 3.0, 7.0]  # [minLon, maxLon, minLat, maxLat] for Ghana region
-  fill_values: [9999, -9999, 99999, -99999]
-  description: "NOAA-20 VIIRS Chlorophyll for AFAI-based Sargassum detection"
+# ───── Active datasets (Sentinel-3 OLCI) ─────────────────────────────
 
-# Alternative VIIRS NPP Chlorophyll dataset
-viirs_npp_chla:
-  server: "https://coastwatch.noaa.gov/erddap"
-  dataset_id: "noaacwNPPVIIRSchlociDaily"  # NPP VIIRS Chlorophyll Daily
-  var: "chlor_a"
-  lat: "latitude" 
-  lon: "longitude"
-  time: "time"
-  default_bbox: [-4.5, 2.5, 3.0, 7.0]
-  fill_values: [9999, -9999, 99999, -99999]
-  description: "NPP VIIRS Chlorophyll for AFAI-based Sargassum detection"
-
-# Sentinel-3A OLCI Chlorophyll Global 4km
+# Sentinel-3A OLCI Chlorophyll Global 4km — ACTIVE, data to present
 s3a_olci_chla:
   server: "https://coastwatch.noaa.gov/erddap"
-  dataset_id: "noaacwS3AOLCIchlaDaily"  # S3A OLCI Chlorophyll Daily Global
+  dataset_id: "noaacwS3AOLCIchlaDaily"
   var: "chlor_a"
   lat: "latitude"
-  lon: "longitude" 
+  lon: "longitude"
   time: "time"
-  default_bbox: [-4.5, 2.5, 3.0, 7.0]
+  has_altitude: true        # griddap dimension order: time, altitude, lat, lon
+  altitude_value: 0.0       # surface
+  default_bbox: [-4.5, 2.5, 3.0, 7.0]  # [minLon, maxLon, minLat, maxLat] for Ghana region
   fill_values: [9999, -9999, 99999, -99999]
   description: "Sentinel-3A OLCI Chlorophyll for MCI-based Sargassum detection"
 
-# Sentinel-3B OLCI Chlorophyll Global 4km  
+# Sentinel-3B OLCI Chlorophyll Global 4km — ACTIVE, data to present
 s3b_olci_chla:
   server: "https://coastwatch.noaa.gov/erddap"
-  dataset_id: "noaacwS3BOLCIchlaDaily"  # S3B OLCI Chlorophyll Daily Global
+  dataset_id: "noaacwS3BOLCIchlaDaily"
   var: "chlor_a"
   lat: "latitude"
   lon: "longitude"
-  time: "time" 
+  time: "time"
+  has_altitude: true
+  altitude_value: 0.0
   default_bbox: [-4.5, 2.5, 3.0, 7.0]
   fill_values: [9999, -9999, 99999, -99999]
   description: "Sentinel-3B OLCI Chlorophyll for MCI-based Sargassum detection"
 
-# High-resolution S3A OLCI Sector covering West Africa (if available)
+# ───── Legacy / inactive datasets (kept for reference) ────────────────
+
+# VIIRS NOAA-20 Daily Chlorophyll — DEPRECATED, data ended 2021-09-02
+# Variable is chl_oci (not chlor_a), no altitude dimension.
+viirs_chla:
+  server: "https://coastwatch.noaa.gov/erddap"
+  dataset_id: "noaacwNPPN20VIIRSchlociDaily"
+  var: "chl_oci"             # corrected variable name
+  lat: "latitude"
+  lon: "longitude"
+  time: "time"
+  has_altitude: false
+  default_bbox: [-4.5, 2.5, 3.0, 7.0]
+  fill_values: [9999, -9999, 99999, -99999]
+  description: "DEPRECATED — NOAA-20 VIIRS Chlorophyll (data ended 2021-09)"
+
+# ───── Sector datasets (higher resolution, experimental) ──────────────
+
+# S3A OLCI Sector CG — covers West Africa at ~300m; may not always have data
 s3a_olci_sector:
   server: "https://coastwatch.noaa.gov/erddap"
-  dataset_id: "noaacwS3AOLCIchlaSectorCGDaily"  # Sector CG covers West Africa
+  dataset_id: "noaacwS3AOLCIchlaSectorCGDaily"
   var: "chlor_a"
   lat: "latitude"
   lon: "longitude"
   time: "time"
+  has_altitude: true
+  altitude_value: 0.0
   default_bbox: [-4.5, 2.5, 3.0, 7.0]
   fill_values: [9999, -9999, 99999, -99999]
-  description: "S3A OLCI 300m Sector CG (West Africa) for high-res Sargassum detection"
-
-# Alternative high-res sector for Ghana region  
-s3a_olci_sector_ch:
-  server: "https://coastwatch.noaa.gov/erddap"
-  dataset_id: "noaacwS3AOLCIchlaSectorCHDaily"  # Sector CH may cover Ghana
-  var: "chlor_a"
-  lat: "latitude"
-  lon: "longitude"
-  time: "time"
-  default_bbox: [-4.5, 2.5, 3.0, 7.0]
-  fill_values: [9999, -9999, 99999, -99999]
-  description: "S3A OLCI 300m Sector CH for high-res Sargassum detection"
-
-# Example alternative servers (uncomment and configure as needed)
-# Alternative ERDDAP servers you can try:
-# - https://upwell.pfeg.noaa.gov/erddap
-# - https://data.nodc.noaa.gov/erddap
-# - https://erddap.marine.ie/erddap
-
-# Example dataset configurations (these are placeholders):
-# For actual dataset IDs, browse the ERDDAP servers above and look for:
-# - VIIRS AFAI products
-# - Sentinel-3 OLCI AFAI/MCI products
-# - Products covering the Gulf of Guinea region
-
-# Common ERDDAP dataset naming patterns:
-# VIIRS: Often contains "viirs", "afai", "npp" in the dataset ID
-# OLCI: Often contains "olci", "s3", "sentinel" in the dataset ID
-# Regional: May contain "west_africa", "atlantic", or geographic identifiers
+  description: "S3A OLCI 300m Sector CG (West Africa) — experimental"

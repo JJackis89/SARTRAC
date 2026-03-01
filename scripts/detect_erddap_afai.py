@@ -86,16 +86,26 @@ class ERDDAPDetector:
         # Format date for ERDDAP
         date_formatted = f"{date_str}T00:00:00Z"
         
-        # Build query parameters
+        # Build query parameters — request only the science variable + coords
         vars_str = f"{var},{lat_var},{lon_var}"
         if time_var:
             vars_str = f"{vars_str},{time_var}"
         
         time_constraint = f"[({date_formatted})]" if time_var else ""
+        
+        # Some griddap datasets have an altitude/elevation dimension between
+        # time and lat/lon.  When present we must include [(0.0)] for surface.
+        altitude_constraint = ""
+        if dataset.get('has_altitude', False):
+            altitude_val = dataset.get('altitude_value', 0.0)
+            altitude_constraint = f"[({altitude_val})]"
+        
         lat_constraint = f"[({min_lat}):1:({max_lat})]"
         lon_constraint = f"[({min_lon}):1:({max_lon})]"
         
-        url = f"{server}/griddap/{dataset_id}.csv?{vars_str}{time_constraint}{lat_constraint}{lon_constraint}"
+        url = (f"{server}/griddap/{dataset_id}.csv?"
+               f"{vars_str}{time_constraint}{altitude_constraint}"
+               f"{lat_constraint}{lon_constraint}")
         
         logger.info(f"Built ERDDAP URL for {dataset_key}: {url}")
         return url
@@ -306,9 +316,14 @@ class ERDDAPDetector:
             logger.error(f"Failed to clip to ROI: {e}")
             return gdf
     
-    def detect(self, dataset_key, date_str, threshold, roi_path=None, bbox=None):
+    def detect(self, dataset_key, date_str, threshold, roi_path=None, bbox=None,
+               lookback_days=7):
         """
-        Main detection workflow.
+        Main detection workflow with date lookback.
+
+        Satellite data typically has 1-7 day latency and individual days can
+        be fully cloud-covered.  When the requested *date_str* yields no
+        valid pixels we retry up to *lookback_days* earlier dates.
         
         Args:
             dataset_key: Dataset configuration key
@@ -316,10 +331,40 @@ class ERDDAPDetector:
             threshold: Detection threshold
             roi_path: Path to ROI file for clipping
             bbox: Custom bounding box
+            lookback_days: How many days back to search for cloud-free data
             
         Returns:
             GeoDataFrame with detections
         """
+        from datetime import timedelta
+
+        base_date = datetime.strptime(date_str, '%Y-%m-%d')
+
+        for offset in range(0, lookback_days + 1):
+            try_date = (base_date - timedelta(days=offset)).strftime('%Y-%m-%d')
+            try:
+                gdf = self._detect_single_date(
+                    dataset_key, try_date, threshold, roi_path, bbox
+                )
+                if not gdf.empty:
+                    logger.info(f"Got {len(gdf)} detections from {try_date} "
+                                f"(offset={offset} days)")
+                    gdf['detection_date'] = try_date
+                    return gdf
+                # Date yielded data but nothing above threshold
+                if offset == 0:
+                    logger.info(f"{try_date}: no detections above threshold "
+                                f"— will look back")
+            except Exception as e:
+                logger.warning(f"{try_date}: {e} — will look back")
+
+        logger.warning(f"No cloud-free data found in last {lookback_days} days")
+        return gpd.GeoDataFrame()
+
+    # ------------------------------------------------------------------
+    def _detect_single_date(self, dataset_key, date_str, threshold,
+                            roi_path=None, bbox=None):
+        """Run detection for a single date (no lookback)."""
         try:
             # Build ERDDAP URL
             url = self.build_erddap_url(dataset_key, date_str, bbox)
@@ -328,14 +373,14 @@ class ERDDAPDetector:
             df = self.fetch_data(url, dataset_key)
             
             if df.empty:
-                logger.warning("No data retrieved from ERDDAP")
+                logger.info(f"{date_str}: no valid data from ERDDAP")
                 return gpd.GeoDataFrame()
             
             # Apply threshold
             detections = self.apply_threshold(df, dataset_key, threshold)
             
             if detections.empty:
-                logger.warning("No detections above threshold")
+                logger.info(f"{date_str}: no detections above threshold")
                 return gpd.GeoDataFrame()
             
             # Convert to points
@@ -348,7 +393,7 @@ class ERDDAPDetector:
             return gdf
             
         except Exception as e:
-            logger.error(f"Detection failed: {e}")
+            logger.error(f"Detection failed for {date_str}: {e}")
             return gpd.GeoDataFrame()
 
 def main():
@@ -356,14 +401,16 @@ def main():
     parser = argparse.ArgumentParser(description='Detect Sargassum from ERDDAP data')
     parser.add_argument('--date', required=True, help='Date YYYY-MM-DD')
     parser.add_argument('--dataset', required=True, 
-                       choices=['viirs_chla', 'viirs_npp_chla', 's3a_olci_chla', 's3b_olci_chla'],
-                       help='Dataset to query')
+                       choices=['s3a_olci_chla', 's3b_olci_chla', 'viirs_chla',\n                                's3a_olci_sector'],
+                       help='Dataset to query (s3a/s3b recommended; viirs is legacy)')
     parser.add_argument('--threshold', type=float, default=0.02,
                        help='Detection threshold')
     parser.add_argument('--roi', help='ROI GeoJSON file for clipping')
     parser.add_argument('--out', required=True, help='Output GeoJSON file')
     parser.add_argument('--bbox', nargs=4, type=float, metavar=('minLon', 'maxLon', 'minLat', 'maxLat'),
                        help='Custom bounding box')
+    parser.add_argument('--lookback', type=int, default=7,
+                       help='Days to look back for cloud-free data (default 7)')
     parser.add_argument('--config', default='config/datasets.yaml',
                        help='Dataset configuration file')
     parser.add_argument('--verbose', '-v', action='store_true',
@@ -389,7 +436,8 @@ def main():
             date_str=args.date,
             threshold=args.threshold,
             roi_path=args.roi,
-            bbox=args.bbox
+            bbox=args.bbox,
+            lookback_days=args.lookback
         )
         
         # Save results

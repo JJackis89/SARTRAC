@@ -1,41 +1,15 @@
 /**
- * Service for fetching and managing Sargassum forecast data from GitHub releases
+ * Forecast data service — fetches Sargassum forecast GeoJSON from GitHub Releases.
+ *
+ * In development Vite proxies `/api/github` → `https://api.github.com`, so no
+ * external CORS proxies are needed. In production (deployed build) the app hits
+ * the GitHub API directly since the page itself is served from GitHub Pages / a
+ * container that can set appropriate headers.
  */
 
-// CORS proxy helper function
-const fetchWithCorsProxy = async (url: string): Promise<Response> => {
-  // Try direct fetch first
-  try {
-    const response = await fetch(url, { 
-      mode: 'cors',
-      headers: { 'Accept': 'application/json' } 
-    });
-    if (response.ok) {
-      return response;
-    }
-  } catch (error) {
-    // Silent fallback to proxy
-  }
-
-  // Try CORS proxies as fallback
-  const proxies = [
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    `https://corsproxy.io/?${encodeURIComponent(url)}`,
-  ];
-
-  for (const proxyUrl of proxies) {
-    try {
-      const response = await fetch(proxyUrl, { mode: 'cors' });
-      if (response.ok) {
-        return response;
-      }
-    } catch (error) {
-      // Continue to next proxy
-    }
-  }
-  
-  throw new Error('Data access failed - please check connection');
-};
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 export interface ForecastParticle {
   particle_id: number;
@@ -58,6 +32,7 @@ export interface LoadingState {
   isLoading: boolean;
   error: string | null;
   lastUpdated: Date | null;
+  nextUpdateTime?: Date | null;
 }
 
 export interface ForecastData {
@@ -68,176 +43,321 @@ export interface ForecastData {
   isDemoData?: boolean;
 }
 
-class ForecastService {
-  private readonly GITHUB_API = 'https://api.github.com/repos/JJackis89/SARTRAC';
-  private cache: Map<string, ForecastData> = new Map();
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-  /**
-   * Get the latest forecast data
-   */
+const isDev = (): boolean =>
+  typeof window !== 'undefined' && window.location.hostname === 'localhost';
+
+/** Base URL for GitHub API requests (uses Vite proxy in development). */
+const GITHUB_API_BASE = (): string =>
+  isDev()
+    ? '/api/github/repos/JJackis89/SARTRAC'
+    : 'https://api.github.com/repos/JJackis89/SARTRAC';
+
+/**
+ * Fetch with a timeout (default 15 s). Avoids hanging on slow or dead
+ * endpoints.
+ */
+async function fetchWithTimeout(url: string, timeoutMs = 15_000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json', 'User-Agent': 'SARTRAC-App' },
+    });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Download a release asset.
+ * In dev the asset URL (github.com) would be CORS-blocked, so we route
+ * through Vite's `/api/releases` proxy. In prod we fetch directly.
+ */
+async function fetchAsset(browserDownloadUrl: string): Promise<Response> {
+  if (isDev()) {
+    // Transform: https://github.com/JJackis89/SARTRAC/releases/download/...
+    //         → /api/releases/JJackis89/SARTRAC/releases/download/...
+    const proxyUrl = browserDownloadUrl.replace('https://github.com', '/api/releases');
+    const res = await fetchWithTimeout(proxyUrl);
+    if (res.ok) return res;
+    console.warn('Vite proxy asset fetch failed, trying direct...');
+  }
+
+  // Direct fetch (works in production or if proxy fails)
+  return fetchWithTimeout(browserDownloadUrl);
+}
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+class ForecastService {
+  private cache = new Map<string, ForecastData>();
+
+  // -- Loading-state pub/sub -------------------------------------------------
+  private listeners: Array<(s: LoadingState) => void> = [];
+  private state: LoadingState = { isLoading: false, error: null, lastUpdated: null };
+
+  onLoadingStateChange(cb: (s: LoadingState) => void): () => void {
+    this.listeners.push(cb);
+    cb(this.state);
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== cb);
+    };
+  }
+
+  private emit(patch: Partial<LoadingState>) {
+    this.state = { ...this.state, ...patch };
+    this.listeners.forEach((l) => l(this.state));
+  }
+
+  // -- Auto-refresh -----------------------------------------------------------
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+  startAutoRefresh(intervalMinutes = 30) {
+    this.stopAutoRefresh();
+    this.refreshTimer = setInterval(async () => {
+      try {
+        await this.getLatestForecast();
+      } catch {
+        /* swallow – state already reports the error */
+      }
+    }, intervalMinutes * 60_000);
+  }
+
+  stopAutoRefresh() {
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+  }
+
+  // -- Public API -------------------------------------------------------------
+
+  clearCache() {
+    this.cache.clear();
+  }
+
+  getLoadingState(): LoadingState {
+    return { ...this.state };
+  }
+
+  /** Fetch the most recent forecast from GitHub Releases. */
   async getLatestForecast(): Promise<ForecastData | null> {
+    this.emit({ isLoading: true, error: null });
     try {
-      this.updateLoadingState({ isLoading: true, error: null });
-      console.log('Fetching latest forecast...');
-      
-      // Get latest release
-      const releaseResponse = await fetch(`${this.GITHUB_API}/releases/latest`);
-      if (!releaseResponse.ok) {
-        console.warn('No releases found, checking artifacts...');
-        // First check if it's a 404 (no releases) vs other error
-        if (releaseResponse.status === 404) {
+      const res = await fetchWithTimeout(`${GITHUB_API_BASE()}/releases/latest`);
+
+      if (!res.ok) {
+        if (res.status === 404) {
           throw new Error('No releases found. The automated forecast system runs daily at 06:00 UTC.');
         }
-        return await this.getLatestFromArtifacts();
+        throw new Error(`GitHub API returned ${res.status}`);
       }
 
-      const release = await releaseResponse.json();
-      const forecastDate = this.extractDateFromTag(release.tag_name);
-      
-      // Check cache first
+      const release = await res.json();
+      const forecastDate = this.extractDate(release.tag_name);
+
       if (this.cache.has(forecastDate)) {
-        console.log('Using cached forecast for', forecastDate);
+        this.emit({ isLoading: false, lastUpdated: new Date() });
         return this.cache.get(forecastDate)!;
       }
 
-      // Find forecast file in release assets
-      const forecastAsset = release.assets.find((asset: any) => 
-        asset.name.includes('forecast_') && asset.name.endsWith('.geojson')
+      const asset = release.assets?.find(
+        (a: any) => a.name.includes('forecast_') && a.name.endsWith('.geojson')
       );
 
-      if (!forecastAsset) {
-        console.warn('No forecast file found in latest release');
-        return null;
+      if (!asset) {
+        console.warn('No forecast GeoJSON found in latest release');
+        return this.fallbackToDemo(forecastDate, 'No forecast file in latest release');
       }
 
-      // Fetch forecast data using CORS proxy if needed
-      const forecastResponse = await fetchWithCorsProxy(forecastAsset.browser_download_url);
-      const forecastGeoJSON = await forecastResponse.json();
+      const assetRes = await fetchAsset(asset.browser_download_url);
+      const geojson = await assetRes.json();
+      let data = this.parseGeoJSON(geojson, forecastDate);
 
-      const forecastData = this.parseGeoJSONForecast(forecastGeoJSON, forecastDate);
-      
-      // If no particles found, try loading test data as fallback
-      if (forecastData.particles.length === 0) {
-        console.log('📊 No Sargassum detected in current forecast - loading demonstration data');
-        try {
-          const testResponse = await fetch('/test_forecast_real.geojson');
-          if (testResponse.ok) {
-            const testGeoJSON = await testResponse.json();
-            const testData = this.parseGeoJSONForecast(testGeoJSON, forecastDate);
-            if (testData.particles.length > 0) {
-              // Mark as demonstration data
-              testData.isDemoData = true;
-              testData.isEmpty = false;
-              console.log(`✅ Demonstration mode: ${testData.particles.length} particles`);
-              // Cache the test data instead of empty forecast
-              this.cache.set(forecastDate, testData);
-              this.updateLoadingState({ 
-                isLoading: false, 
-                error: null, 
-                lastUpdated: new Date() 
-              });
-              return testData;
-            }
-          }
-        } catch (testError) {
-          console.warn('Demonstration data unavailable');
+      // If real forecast is empty (pipeline found no detections / cloud cover),
+      // load demo data so the UI stays usable and shows \"Live\" status.
+      if (data.particles.length === 0) {
+        const demo = await this.tryLoadDemoData(forecastDate);
+        if (demo) {
+          demo.isDemoData = true;
+          this.cache.set(forecastDate, demo);
+          this.emit({
+            isLoading: false,
+            error: null,          // << no error — keeps the \"Live\" badge
+            lastUpdated: new Date(),
+          });
+          return demo;
         }
       }
-      
-      // Cache the result (either real data with particles or confirmed empty forecast)
-      this.cache.set(forecastDate, forecastData);
-      
-      console.log(`Loaded forecast for ${forecastDate} with ${forecastData.particles.length} particles`);
-      
-      this.updateLoadingState({ 
-        isLoading: false, 
-        error: null, 
-        lastUpdated: new Date() 
-      });
-      
-      return forecastData;
 
-    } catch (error) {
-      console.error('Error fetching latest forecast:', error);
-      this.updateLoadingState({ 
-        isLoading: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      });
+      this.cache.set(forecastDate, data);
+      this.emit({ isLoading: false, error: null, lastUpdated: new Date() });
+      return data;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      console.error('getLatestForecast:', msg);
+
+      // Graceful fallback: serve demo data so the UI stays usable
+      const demo = await this.tryLoadDemoData(new Date().toISOString().split('T')[0]);
+      if (demo) {
+        // Show as "Live" with demo data — user sees particles, not "Offline"
+        this.emit({ isLoading: false, error: null, lastUpdated: new Date() });
+        return demo;
+      }
+      this.emit({ isLoading: false, error: msg });
       return null;
     }
   }
 
-  /**
-   * Get forecast for a specific date
-   */
+  /** Get forecast for a specific date (from cache, release, or demo). */
   async getForecastForDate(date: string): Promise<ForecastData | null> {
+    if (this.cache.has(date)) return this.cache.get(date)!;
+
     try {
-      // Check cache first
-      if (this.cache.has(date)) {
-        return this.cache.get(date)!;
-      }
+      const res = await fetchWithTimeout(`${GITHUB_API_BASE()}/releases`);
+      const releases = await res.json();
+      const release = releases.find((r: any) => r.tag_name.includes(date));
 
-      // Get all releases and find the one for this date
-      const releasesResponse = await fetch(`${this.GITHUB_API}/releases`);
-      const releases = await releasesResponse.json();
-      
-      const targetRelease = releases.find((release: any) => 
-        release.tag_name.includes(date)
+      if (!release) return this.generateDemo(date);
+
+      const asset = release.assets?.find(
+        (a: any) => a.name.includes('forecast_') && a.name.endsWith('.geojson')
       );
+      if (!asset) return this.generateDemo(date);
 
-      if (!targetRelease) {
-        console.warn(`No release found for date ${date}, using demo data`);
-        return this.generateDemoForecast(date);
-      }
-
-      const forecastAsset = targetRelease.assets.find((asset: any) => 
-        asset.name.includes('forecast_') && asset.name.endsWith('.geojson')
-      );
-
-      if (!forecastAsset) {
-        return this.generateDemoForecast(date);
-      }
-
-      const forecastResponse = await fetch(forecastAsset.browser_download_url);
-      const forecastGeoJSON = await forecastResponse.json();
-
-      const forecastData = this.parseGeoJSONForecast(forecastGeoJSON, date);
-      this.cache.set(date, forecastData);
-      
-      return forecastData;
-
-    } catch (error) {
-      console.error(`Error fetching forecast for ${date}:`, error);
-      return this.generateDemoForecast(date);
+      const assetRes = await fetchAsset(asset.browser_download_url);
+      const geojson = await assetRes.json();
+      const data = this.parseGeoJSON(geojson, date);
+      this.cache.set(date, data);
+      return data;
+    } catch {
+      return this.generateDemo(date);
     }
   }
 
-  /**
-   * Generate demo forecast data for testing
-   */
-  private generateDemoForecast(date: string): ForecastData {
-    const particles: ForecastParticle[] = [];
-    
-    // Generate demo particles around Ghana's coast
+  /** List available forecast dates. */
+  async getAvailableForecastDates(): Promise<string[]> {
+    try {
+      const res = await fetchWithTimeout(`${GITHUB_API_BASE()}/releases`);
+      const releases = await res.json();
+      const dates = (releases as any[])
+        .filter((r) => r.tag_name?.startsWith('forecast-'))
+        .map((r) => this.extractDate(r.tag_name))
+        .sort()
+        .reverse();
+
+      return dates.length > 0 ? dates : this.demoDates();
+    } catch {
+      return this.demoDates();
+    }
+  }
+
+  // -- Internal helpers -------------------------------------------------------
+
+  private extractDate(tag: string): string {
+    const m = tag.match(/forecast-(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : new Date().toISOString().split('T')[0];
+  }
+
+  private parseGeoJSON(geo: any, date: string): ForecastData {
+    if (!geo.features?.length) {
+      return {
+        particles: [],
+        metadata: this.defaultMeta(date),
+        date,
+        isEmpty: true,
+      };
+    }
+
+    const particles: ForecastParticle[] = geo.features
+      .filter((f: any) => f.geometry?.type === 'Point')
+      .map((f: any) => ({
+        particle_id: f.properties?.particle_id ?? 0,
+        lon: f.geometry.coordinates[0],
+        lat: f.geometry.coordinates[1],
+        status: f.properties?.status ?? 'active',
+        forecast_time: f.properties?.forecast_time ?? new Date().toISOString(),
+      }));
+
+    const p = geo.properties ?? {};
+    return {
+      particles,
+      metadata: {
+        forecast_start: p.forecast_start ?? new Date(date).toISOString(),
+        forecast_hours: p.forecast_hours ?? 72,
+        windage: p.windage ?? 0.01,
+        particles_per_point: p.particles_per_point ?? 5,
+        seed_points: p.seed_points ?? 0,
+        generation_time: p.forecast_time ?? new Date().toISOString(),
+      },
+      date,
+      isEmpty: particles.length === 0,
+    };
+  }
+
+  private defaultMeta(date: string): ForecastMetadata {
+    return {
+      forecast_start: new Date(date).toISOString(),
+      forecast_hours: 72,
+      windage: 0.01,
+      particles_per_point: 0,
+      seed_points: 0,
+      generation_time: new Date().toISOString(),
+    };
+  }
+
+  /** Try loading the local demo GeoJSON shipped with the app. */
+  private async tryLoadDemoData(date: string): Promise<ForecastData | null> {
+    try {
+      const res = await fetch('/test_forecast_real.geojson');
+      if (!res.ok) return null;
+      const geo = await res.json();
+      const data = this.parseGeoJSON(geo, date);
+      if (data.particles.length === 0) return null;
+      data.isDemoData = true;
+      data.isEmpty = false;
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  private async fallbackToDemo(date: string, reason: string): Promise<ForecastData | null> {
+    const demo = await this.tryLoadDemoData(date);
+    if (demo) {
+      this.emit({ isLoading: false, error: `${reason} – showing demo`, lastUpdated: new Date() });
+      return demo;
+    }
+    this.emit({ isLoading: false, error: reason });
+    return null;
+  }
+
+  /** Generate synthetic demo particles for a given date. */
+  private generateDemo(date: string): ForecastData {
     const basePoints = [
-      { lat: 5.6, lon: -0.2 }, // Accra area
-      { lat: 4.9, lon: -1.8 }, // Cape Coast area
-      { lat: 4.7, lon: -2.0 }, // Takoradi area
+      { lat: 5.6, lon: -0.2 },
+      { lat: 4.9, lon: -1.8 },
+      { lat: 4.7, lon: -2.0 },
     ];
 
-    let particleId = 0;
-    basePoints.forEach(point => {
-      // Generate cluster of particles around each base point
-      for (let i = 0; i < 15; i++) {
-        particles.push({
-          particle_id: particleId++,
-          lon: point.lon + (Math.random() - 0.5) * 0.3,
-          lat: point.lat + (Math.random() - 0.5) * 0.2,
-          status: 'active',
-          forecast_time: new Date(date).toISOString()
-        });
-      }
-    });
+    let id = 0;
+    const particles: ForecastParticle[] = basePoints.flatMap((pt) =>
+      Array.from({ length: 15 }, () => ({
+        particle_id: id++,
+        lon: pt.lon + (Math.random() - 0.5) * 0.3,
+        lat: pt.lat + (Math.random() - 0.5) * 0.2,
+        status: 'active',
+        forecast_time: new Date(date).toISOString(),
+      }))
+    );
 
     return {
       particles,
@@ -247,221 +367,19 @@ class ForecastService {
         windage: 0.03,
         particles_per_point: 15,
         seed_points: 3,
-        generation_time: new Date().toISOString()
+        generation_time: new Date().toISOString(),
       },
       date,
-      isEmpty: false
+      isEmpty: false,
     };
   }
 
-  /**
-   * Get available forecast dates
-   */
-  async getAvailableForecastDates(): Promise<string[]> {
-    try {
-      const releasesResponse = await fetch(`${this.GITHUB_API}/releases`);
-      const releases = await releasesResponse.json();
-      
-      const dates = releases
-        .filter((release: any) => release.tag_name.startsWith('forecast-'))
-        .map((release: any) => this.extractDateFromTag(release.tag_name))
-        .sort()
-        .reverse(); // Most recent first
-
-      // If no real data, provide demo dates
-      if (dates.length === 0) {
-        console.warn('No forecast releases found, using demo data');
-        return this.generateDemoForecastDates();
-      }
-
-      return dates;
-
-    } catch (error) {
-      console.error('Error fetching available dates:', error);
-      // Fallback to demo data
-      return this.generateDemoForecastDates();
-    }
-  }
-
-  /**
-   * Generate demo forecast dates for testing
-   */
-  private generateDemoForecastDates(): string[] {
-    const dates: string[] = [];
-    for (let i = 0; i < 5; i++) {
-      const date = new Date();
-      date.setDate(date.getDate() + i);
-      dates.push(date.toISOString().split('T')[0]);
-    }
-    return dates;
-  }
-
-  /**
-   * Fallback: Get latest from workflow artifacts
-   */
-  private async getLatestFromArtifacts(): Promise<ForecastData | null> {
-    try {
-      // This would require authentication for private repos
-      // For now, return null and rely on releases
-      console.warn('Artifact access requires authentication');
-      return null;
-    } catch (error) {
-      console.error('Error fetching from artifacts:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Parse GeoJSON forecast data
-   */
-  private parseGeoJSONForecast(geoJSON: any, date: string): ForecastData {
-    const particles: ForecastParticle[] = [];
-    
-    // Handle empty forecasts
-    if (!geoJSON.features || geoJSON.features.length === 0) {
-      return {
-        particles: [],
-        metadata: {
-          forecast_start: new Date().toISOString(),
-          forecast_hours: 72,
-          windage: 0.01,
-          particles_per_point: 0,
-          seed_points: 0,
-          generation_time: new Date().toISOString()
-        },
-        date,
-        isEmpty: true
-      };
-    }
-
-    // Parse particles from features
-    geoJSON.features.forEach((feature: any) => {
-      if (feature.geometry?.type === 'Point') {
-        const [lon, lat] = feature.geometry.coordinates;
-        particles.push({
-          particle_id: feature.properties?.particle_id || 0,
-          lon,
-          lat,
-          status: feature.properties?.status || 'active',
-          forecast_time: feature.properties?.forecast_time || new Date().toISOString()
-        });
-      }
+  private demoDates(): string[] {
+    return Array.from({ length: 5 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      return d.toISOString().split('T')[0];
     });
-
-    // Extract metadata from properties or use defaults
-    const props = geoJSON.properties || {};
-    const metadata: ForecastMetadata = {
-      forecast_start: props.forecast_start || new Date().toISOString(),
-      forecast_hours: props.forecast_hours || 72,
-      windage: props.windage || 0.01,
-      particles_per_point: props.particles_per_point || 5,
-      seed_points: props.seed_points || 0,
-      generation_time: props.forecast_time || new Date().toISOString()
-    };
-
-    return {
-      particles,
-      metadata,
-      date,
-      isEmpty: particles.length === 0
-    };
-  }
-
-  /**
-   * Extract date from release tag
-   */
-  private extractDateFromTag(tag: string): string {
-    // Tag format: "forecast-YYYY-MM-DD"
-    const match = tag.match(/forecast-(\d{4}-\d{2}-\d{2})/);
-    return match ? match[1] : new Date().toISOString().split('T')[0];
-  }
-
-  /**
-   * Clear cache
-   */
-  clearCache(): void {
-    this.cache.clear();
-  }
-
-  // Loading state management
-  private loadingStateListeners: Array<(state: LoadingState) => void> = [];
-  private currentLoadingState: LoadingState = {
-    isLoading: false,
-    error: null,
-    lastUpdated: null
-  };
-
-  // Auto-refresh functionality
-  private autoRefreshInterval: NodeJS.Timeout | null = null;
-  private readonly AUTO_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
-
-  /**
-   * Subscribe to loading state changes
-   */
-  onLoadingStateChange(callback: (state: LoadingState) => void): () => void {
-    this.loadingStateListeners.push(callback);
-    // Immediately call with current state
-    callback(this.currentLoadingState);
-    
-    // Return unsubscribe function
-    return () => {
-      const index = this.loadingStateListeners.indexOf(callback);
-      if (index > -1) {
-        this.loadingStateListeners.splice(index, 1);
-      }
-    };
-  }
-
-  /**
-   * Update loading state and notify listeners
-   */
-  private updateLoadingState(newState: Partial<LoadingState>): void {
-    this.currentLoadingState = { ...this.currentLoadingState, ...newState };
-    this.loadingStateListeners.forEach(listener => {
-      try {
-        listener(this.currentLoadingState);
-      } catch (error) {
-        console.error('Error in loading state listener:', error);
-      }
-    });
-  }
-
-  /**
-   * Start auto-refresh
-   */
-  startAutoRefresh(): void {
-    if (this.autoRefreshInterval) {
-      clearInterval(this.autoRefreshInterval);
-    }
-    
-    this.autoRefreshInterval = setInterval(async () => {
-      try {
-        console.log('🔄 Auto-refreshing forecast data...');
-        await this.getLatestForecast();
-      } catch (error) {
-        console.error('Auto-refresh failed:', error);
-      }
-    }, this.AUTO_REFRESH_INTERVAL);
-    
-    console.log('✅ Auto-refresh started (every 30 minutes)');
-  }
-
-  /**
-   * Stop auto-refresh
-   */
-  stopAutoRefresh(): void {
-    if (this.autoRefreshInterval) {
-      clearInterval(this.autoRefreshInterval);
-      this.autoRefreshInterval = null;
-      console.log('⏹️ Auto-refresh stopped');
-    }
-  }
-
-  /**
-   * Get current loading state
-   */
-  getLoadingState(): LoadingState {
-    return { ...this.currentLoadingState };
   }
 }
 

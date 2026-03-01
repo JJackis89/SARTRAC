@@ -91,14 +91,19 @@ jobs:
         echo "Winds → ${RESOLVED_WINDS_URL}"
         curl -sI --max-time 15 "${RESOLVED_WINDS_URL}" | head -3 || echo "⚠ winds unreachable"
 
-    # ── Detection: ERDDAP chlorophyll (always available) ────────────
+    # ── Detection: ERDDAP chlorophyll (Sentinel-3 OLCI — active) ──────
     - name: Run ERDDAP detections
       continue-on-error: true
       run: |
-        for ds in viirs_chla s3a_olci_chla s3b_olci_chla; do
+        # Query only active S3 datasets (VIIRS NOAA-20 data ended 2021)
+        # Use --lookback 7 because satellite data has 1-7 day latency
+        # and individual days may be fully cloud-covered.
+        # Threshold 0.3 mg/m³ is appropriate for Gulf of Guinea Sargassum.
+        for ds in s3a_olci_chla s3b_olci_chla; do
           echo "  → $ds"
           python scripts/detect_erddap_afai.py \
-            --date "$FORECAST_DATE" --dataset "$ds" --threshold 0.5 \
+            --date "$FORECAST_DATE" --dataset "$ds" --threshold 0.3 \
+            --lookback 7 \
             --roi data/ghana_20nm.geojson \
             --out "data/${ds}_${FORECAST_DATE}.geojson" \
             --verbose || echo "  ⚠ $ds failed"
