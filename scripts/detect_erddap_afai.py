@@ -86,11 +86,12 @@ class ERDDAPDetector:
         # Format date for ERDDAP
         date_formatted = f"{date_str}T00:00:00Z"
         
-        # Build query parameters — request only the science variable + coords
-        vars_str = f"{var},{lat_var},{lon_var}"
-        if time_var:
-            vars_str = f"{vars_str},{time_var}"
-        
+        # Build dimensional constraints for the science variable.
+        # In ERDDAP griddap, constraints attach to the *variable* not as
+        # separate parameters.  Coordinate columns (time, latitude, longitude)
+        # are returned automatically — we must NOT list them as extra vars,
+        # otherwise ERDDAP tries to apply 4-D constraints to a 1-D variable
+        # and returns HTTP 500.
         time_constraint = f"[({date_formatted})]" if time_var else ""
         
         # Some griddap datasets have an altitude/elevation dimension between
@@ -104,7 +105,7 @@ class ERDDAPDetector:
         lon_constraint = f"[({min_lon}):1:({max_lon})]"
         
         url = (f"{server}/griddap/{dataset_id}.csv?"
-               f"{vars_str}{time_constraint}{altitude_constraint}"
+               f"{var}{time_constraint}{altitude_constraint}"
                f"{lat_constraint}{lon_constraint}")
         
         logger.info(f"Built ERDDAP URL for {dataset_key}: {url}")
