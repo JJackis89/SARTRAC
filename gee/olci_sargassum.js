@@ -24,7 +24,7 @@ var AFAI_THRESHOLD = 0.02;       // AFAI threshold for Sargassum detection
 var MCI_THRESHOLD = 0.00;        // MCI threshold for Sargassum detection
 
 // Export parameters
-var GCS_BUCKET = 'YOUR_BUCKET_NAME';  // TODO: Replace with your GCS bucket
+var GCS_BUCKET = 'sartrac-forecasts';  // GCS bucket for exports (create via: gsutil mb gs://sartrac-forecasts)
 var EXPORT_SCALE = 300;               // Export resolution in meters (OLCI native ~300m)
 
 // Ghana offshore band (0-20 nautical miles)

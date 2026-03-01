@@ -5,6 +5,7 @@ import { forecastService } from '../services/forecastService';
 
 interface ShowLayers {
   forecast: boolean;
+  detections: boolean;
   drift: boolean;
   uncertainty: boolean;
   bathymetry: boolean;
@@ -213,6 +214,23 @@ export function ControlDrawer({
                       <div>Resolution: 1 km</div>
                       <div>Update: every 6 hours</div>
                     </div>
+                  </div>
+                </LayerCard>
+
+                {/* Detection Points */}
+                <LayerCard
+                  id="detections"
+                  label="Satellite Detections"
+                  checked={showLayers.detections}
+                  onCheckedChange={(v) => updateLayer('detections', v)}
+                  collapsed={collapsedLayers.has('detections')}
+                  onToggleCollapse={() => toggleCollapse('detections')}
+                  tooltip="Raw satellite detection points"
+                >
+                  <div className="text-xs text-teal-foam space-y-1">
+                    <div>Source: Sentinel-3 OLCI chlor-a</div>
+                    <div>Shows where satellites detected Sargassum</div>
+                    <div>Yellow dots = detection locations</div>
                   </div>
                 </LayerCard>
 

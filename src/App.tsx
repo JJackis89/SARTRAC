@@ -12,6 +12,8 @@ import { DriftVectorsOverlay } from './components/DriftVectorsOverlay';
 import { UncertaintyOverlay } from './components/UncertaintyOverlay';
 import { BathymetryOverlay } from './components/BathymetryOverlay';
 import { AlertPanel } from './components/AlertPanel';
+import { DetectionPointsOverlay } from './components/DetectionPointsOverlay';
+import AccuracyPanel from './components/AccuracyPanel';
 import MapController from './components/MapController';
 import CoastSnapPoints from './components/CoastSnapPoints';
 
@@ -37,12 +39,14 @@ function App() {
   const [uncertaintyStyle, setUncertaintyStyle] = useState<'alpha' | 'contour' | 'hatching'>('alpha');
   const [showLayers, setShowLayers] = useState({
     forecast: true,
+    detections: true,
     drift: false,
     uncertainty: false,
     bathymetry: false,
     grid: false,
     coastsnap: true,
   });
+  const [showAccuracy, setShowAccuracy] = useState(false);
 
   return (
     <div
@@ -126,6 +130,13 @@ function App() {
                 showGridCells={showGridCells}
               />
             )}
+            {forecast.currentForecast && showLayers.detections && (
+              <DetectionPointsOverlay
+                detectionData={forecast.currentForecast.detections ?? null}
+                visible={true}
+                opacity={opacity}
+              />
+            )}
             {forecast.currentForecast && showLayers.drift && (
               <DriftVectorsOverlay
                 forecastData={forecast.currentForecast}
@@ -170,6 +181,18 @@ function App() {
               }}
             />
           </div>
+
+          {/* Accuracy Panel Toggle */}
+          <button
+            onClick={() => setShowAccuracy(prev => !prev)}
+            className="absolute top-20 right-4 z-[999] bg-slate-800/90 hover:bg-slate-700 text-white
+                       rounded-lg px-3 py-2 text-xs font-medium border border-slate-600/50 backdrop-blur-sm
+                       transition-colors"
+            title="Forecast accuracy metrics"
+          >
+            📊 Accuracy
+          </button>
+          <AccuracyPanel isOpen={showAccuracy} onClose={() => setShowAccuracy(false)} />
         </div>
 
         {/* Floating Timeline & Scale */}

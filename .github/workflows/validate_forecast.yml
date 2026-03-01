@@ -1,0 +1,98 @@
+name: Weekly Forecast Validation
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Download forecast and observation data
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p validation
+
+          # Get the forecast from 3 days ago
+          FORECAST_DATE=$(date -u -d '3 days ago' +%Y-%m-%d)
+          TODAY=$(date -u +%Y-%m-%d)
+
+          echo "FORECAST_DATE=${FORECAST_DATE}" >> $GITHUB_ENV
+          echo "TODAY=${TODAY}" >> $GITHUB_ENV
+
+          echo "Downloading forecast from ${FORECAST_DATE} to compare against today's observations..."
+
+          # Download 3-day forecast from 3 days ago
+          gh release download "forecast-${FORECAST_DATE}" \
+            --pattern "*forecast_${FORECAST_DATE}*3d*" \
+            --dir validation/ 2>/dev/null \
+          || gh release download "forecast-${FORECAST_DATE}" \
+            --pattern "*forecast_${FORECAST_DATE}.geojson" \
+            --dir validation/ 2>/dev/null \
+          || { echo "No forecast found for ${FORECAST_DATE}"; exit 0; }
+
+          # Download today's detections
+          gh release download "forecast-${TODAY}" \
+            --pattern "*merged_detections*" \
+            --dir validation/ 2>/dev/null \
+          || { echo "No detections found for ${TODAY}"; exit 0; }
+
+          ls -la validation/
+
+      - name: Run validation
+        run: |
+          FORECAST_FILE=$(ls validation/forecast_${FORECAST_DATE}*3d*.geojson 2>/dev/null || ls validation/forecast_${FORECAST_DATE}.geojson 2>/dev/null)
+          OBS_FILE=$(ls validation/merged_detections_${TODAY}*.geojson 2>/dev/null)
+
+          if [ -z "$FORECAST_FILE" ] || [ -z "$OBS_FILE" ]; then
+            echo "Missing files — skipping validation"
+            exit 0
+          fi
+
+          python scripts/validate_forecast.py \
+            --forecast "$FORECAST_FILE" \
+            --observations "$OBS_FILE" \
+            --out "validation/accuracy_${FORECAST_DATE}_vs_${TODAY}.json" \
+            --verbose
+
+      - name: Upload accuracy metrics
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          METRICS_FILE="validation/accuracy_${FORECAST_DATE}_vs_${TODAY}.json"
+          if [ -f "$METRICS_FILE" ]; then
+            # Append to existing release
+            gh release upload "forecast-${TODAY}" "$METRICS_FILE" --clobber 2>/dev/null \
+            || echo "Could not upload metrics to release"
+
+            # Print summary
+            cat "$METRICS_FILE" | python3 -c "
+          import json, sys
+          m = json.load(sys.stdin)
+          print('## Forecast Accuracy Report')
+          print(f'Forecast: {m.get(\"forecast_file\",\"?\")}')
+          print(f'Observations: {m.get(\"observation_file\",\"?\")}')
+          print(f'Hit rate: {m.get(\"hit_rate\",\"N/A\")}')
+          print(f'Miss rate: {m.get(\"miss_rate\",\"N/A\")}')
+          print(f'Spatial correlation: {m.get(\"spatial_correlation\",\"N/A\")}')
+          print(f'Mean distance: {m.get(\"mean_distance_km\",\"N/A\")} km')
+          " >> $GITHUB_STEP_SUMMARY
+          fi

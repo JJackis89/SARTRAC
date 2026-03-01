@@ -35,12 +35,30 @@ export interface LoadingState {
   nextUpdateTime?: Date | null;
 }
 
+export interface DetectionPoint {
+  lat: number;
+  lon: number;
+  value: number;
+  source: string;
+  date: string;
+}
+
+export interface DetectionData {
+  points: DetectionPoint[];
+  date: string;
+  totalPoints: number;
+}
+
+export type ForecastHorizon = '3d' | '5d' | '7d';
+
 export interface ForecastData {
   particles: ForecastParticle[];
   metadata: ForecastMetadata;
   date: string;
   isEmpty: boolean;
   isDemoData?: boolean;
+  detections?: DetectionData;
+  horizon?: ForecastHorizon;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +167,7 @@ class ForecastService {
   }
 
   /** Fetch the most recent forecast from GitHub Releases. */
-  async getLatestForecast(): Promise<ForecastData | null> {
+  async getLatestForecast(horizon: ForecastHorizon = '3d'): Promise<ForecastData | null> {
     this.emit({ isLoading: true, error: null });
     try {
       const res = await fetchWithTimeout(`${GITHUB_API_BASE()}/releases/latest`);
@@ -164,14 +182,22 @@ class ForecastService {
       const release = await res.json();
       const forecastDate = this.extractDate(release.tag_name);
 
-      if (this.cache.has(forecastDate)) {
+      const cacheKey = `${forecastDate}-${horizon}`;
+      if (this.cache.has(cacheKey)) {
         this.emit({ isLoading: false, lastUpdated: new Date() });
-        return this.cache.get(forecastDate)!;
+        return this.cache.get(cacheKey)!;
       }
 
-      const asset = release.assets?.find(
-        (a: any) => a.name.includes('forecast_') && a.name.endsWith('.geojson')
+      // Prefer horizon-specific file (e.g. forecast_2026-03-01_5d.geojson),
+      // fall back to default forecast file
+      const horizonSuffix = `_${horizon}.geojson`;
+      const horizonAsset = release.assets?.find(
+        (a: any) => a.name.includes('forecast_') && a.name.endsWith(horizonSuffix)
       );
+      const defaultAsset = release.assets?.find(
+        (a: any) => a.name.includes('forecast_') && a.name.endsWith('.geojson') && !/_\dd\.geojson$/.test(a.name)
+      );
+      const asset = horizonAsset || defaultAsset;
 
       if (!asset) {
         console.warn('No forecast GeoJSON found in latest release');
@@ -198,7 +224,11 @@ class ForecastService {
         }
       }
 
-      this.cache.set(forecastDate, data);
+      // Also fetch detection points if available
+      data.detections = await this.fetchDetections(release, forecastDate);
+      data.horizon = horizon;
+
+      this.cache.set(cacheKey, data);
       this.emit({ isLoading: false, error: null, lastUpdated: new Date() });
       return data;
     } catch (err) {
@@ -372,6 +402,37 @@ class ForecastService {
       date,
       isEmpty: false,
     };
+  }
+
+  /** Fetch merged detection points from the same release. */
+  private async fetchDetections(release: any, date: string): Promise<DetectionData | undefined> {
+    try {
+      const asset = release.assets?.find(
+        (a: any) => a.name.includes('merged_detections') && a.name.endsWith('.geojson')
+      );
+      if (!asset) return undefined;
+
+      const res = await fetchAsset(asset.browser_download_url);
+      if (!res.ok) return undefined;
+      const geo = await res.json();
+
+      if (!geo.features?.length) return undefined;
+
+      const points: DetectionPoint[] = geo.features
+        .filter((f: any) => f.geometry?.type === 'Point')
+        .map((f: any) => ({
+          lat: f.geometry.coordinates[1],
+          lon: f.geometry.coordinates[0],
+          value: f.properties?.chlor_a ?? f.properties?.value ?? 0,
+          source: f.properties?.source ?? f.properties?.dataset ?? 'satellite',
+          date: f.properties?.date ?? date,
+        }));
+
+      return { points, date, totalPoints: points.length };
+    } catch (e) {
+      console.warn('Failed to fetch detections:', e);
+      return undefined;
+    }
   }
 
   private demoDates(): string[] {

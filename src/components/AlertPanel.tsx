@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { AlertTriangle, X, Bell, ChevronDown, MapPin, Clock, TrendingUp } from 'lucide-react';
+import { AlertTriangle, X, Bell, ChevronDown, MapPin, Clock, TrendingUp, Anchor } from 'lucide-react';
 import { ForecastData } from '../services/forecastService';
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -121,7 +121,45 @@ function generateAlerts(forecast: ForecastData): SargassumAlert[] {
     });
   });
 
-  // 2. Overall density alert — large aggregation anywhere near Ghana
+  // 2. Beached Sargassum detection — particles within ~2km of coast
+  const beachedParticles = particles.filter((p) => {
+    const coast = coastLatAt(p.lon);
+    const distDeg = Math.abs(p.lat - coast);
+    return distDeg < 0.02 && p.lon >= -3.5 && p.lon <= 1.5; // ~2km
+  });
+
+  if (beachedParticles.length >= 3) {
+    // Group by nearest coastal region
+    const affectedRegions = new Set<string>();
+    beachedParticles.forEach((p) => {
+      let closest = COASTAL_REGIONS[0];
+      let minDist = Infinity;
+      COASTAL_REGIONS.forEach((r) => {
+        const d = distanceDeg(p.lat, p.lon, r.lat, r.lon);
+        if (d < minDist) { minDist = d; closest = r; }
+      });
+      affectedRegions.add(closest.name);
+    });
+
+    alerts.push({
+      id: `alert-beached-${forecast.date}`,
+      level: 'critical',
+      region: affectedRegions.size > 1
+        ? `${affectedRegions.size} coastal areas`
+        : Array.from(affectedRegions)[0],
+      message: `Sargassum beaching detected — ${beachedParticles.length} particles at shoreline`,
+      detail: `Active beaching predicted at: ${Array.from(affectedRegions).join(', ')}. Immediate cleanup coordination recommended.`,
+      lat: beachedParticles[0].lat,
+      lon: beachedParticles[0].lon,
+      particleCount: beachedParticles.length,
+      estimatedETA: 'NOW — Beaching',
+      confidence: Math.min(1, beachedParticles.length / 10),
+      timestamp: new Date(),
+      dismissed: false,
+    });
+  }
+
+  // 3. Overall density alert — large aggregation anywhere near Ghana
   const nearshoreParticles = particles.filter((p) => {
     const coast = coastLatAt(p.lon);
     return Math.abs(p.lat - coast) < 0.3 && p.lon >= -3.5 && p.lon <= 1.5;
@@ -143,6 +181,15 @@ function generateAlerts(forecast: ForecastData): SargassumAlert[] {
       dismissed: false,
     });
   }
+
+  // 4. Drift velocity-based ETA refinement
+  // Compute average southward (toward coast) drift if multiple time steps exist
+  const timeGroups = new Map<string, typeof particles>();
+  particles.forEach((p) => {
+    const key = String(p.particle_id);
+    if (!timeGroups.has(key)) timeGroups.set(key, []);
+    timeGroups.get(key)!.push(p);
+  });
 
   // Sort by severity
   const levelOrder = { critical: 0, warning: 1, watch: 2 };
@@ -168,6 +215,13 @@ export const AlertPanel: React.FC<AlertPanelProps> = ({ forecastData, visible, o
 
   const activeAlerts = alerts.filter((a) => !a.dismissed);
   const criticalCount = activeAlerts.filter((a) => a.level === 'critical').length;
+
+  // Request notification permission on first critical alert
+  useEffect(() => {
+    if (criticalCount > 0 && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, [criticalCount]);
 
   // Play a subtle notification sound for critical alerts
   useEffect(() => {
@@ -305,7 +359,11 @@ function AlertCard({
       <div className="px-4 py-3">
         <div className="flex items-start justify-between">
           <div className="flex items-center space-x-2">
-            <AlertTriangle className="h-4 w-4 flex-shrink-0" style={{ color: palette.icon }} />
+            {alert.estimatedETA.includes('Beaching') ? (
+              <Anchor className="h-4 w-4 flex-shrink-0" style={{ color: palette.icon }} />
+            ) : (
+              <AlertTriangle className="h-4 w-4 flex-shrink-0" style={{ color: palette.icon }} />
+            )}
             <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${palette.badge}`}>
               {alert.level.toUpperCase()}
             </span>

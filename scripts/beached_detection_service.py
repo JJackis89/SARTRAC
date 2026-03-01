@@ -51,8 +51,8 @@ class BeachedSargassumDetector:
         authenticate_gee()
         ee.Initialize()
         
-        # Default trained model (update with your asset path)
-        self.model_asset = model_asset or 'users/YOUR_USERNAME/ghana_beached_sargassum_rf_sept2021'
+        # Default trained model
+        self.model_asset = model_asset or 'users/sartrac/ghana_beached_sargassum_rf_sept2021'
         
         # Ghana coastal region
         self.region = region or ee.Geometry.Polygon([

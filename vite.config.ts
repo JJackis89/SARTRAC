@@ -4,8 +4,34 @@ import react from '@vitejs/plugin-react'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // GitHub Pages deploys under /SARTRAC/; local dev uses /
+  base: process.env.GITHUB_ACTIONS ? '/SARTRAC/' : '/',
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './src/test-setup.ts',
+    include: ['src/**/*.test.{ts,tsx}'],
+  },
   server: {
-    port: 3850
+    port: 3850,
+    proxy: {
+      '/api/github': {
+        target: 'https://api.github.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/github/, ''),
+        headers: {
+          'User-Agent': 'SARTRAC-App'
+        }
+      },
+      '/api/releases': {
+        target: 'https://github.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/releases/, ''),
+        headers: {
+          'User-Agent': 'SARTRAC-App'
+        }
+      }
+    }
   },
   build: {
     target: 'esnext',

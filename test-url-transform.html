@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test URL Transformation</title>
+</head>
+<body>
+    <h1>Testing URL Transformation</h1>
+    <div id="output"></div>
+
+    <script>
+        async function testUrlTransformation() {
+            const output = document.getElementById('output');
+            
+            // This is the actual URL from the GitHub API
+            const originalUrl = "https://github.com/JJackis89/SARTRAC/releases/download/forecast-2025-10-28/forecast_2025-10-28.geojson";
+            
+            // This is what the fetchWithCorsProxy function does
+            const proxyUrl = originalUrl.replace('https://github.com', 'http://localhost:3851/api/releases');
+            
+            output.innerHTML = `
+                <p><strong>Original URL:</strong><br>${originalUrl}</p>
+                <p><strong>Proxy URL:</strong><br>${proxyUrl}</p>
+            `;
+            
+            // Test the proxy URL
+            try {
+                output.innerHTML += '<p>Testing proxy URL...</p>';
+                const response = await fetch(proxyUrl);
+                output.innerHTML += `<p>Response status: ${response.status} ${response.statusText}</p>`;
+                
+                if (response.ok) {
+                    const content = await response.text();
+                    output.innerHTML += `<p>✅ Success! Content length: ${content.length}</p>`;
+                    output.innerHTML += `<p>Content preview: <pre>${content.substring(0, 200)}...</pre></p>`;
+                } else {
+                    output.innerHTML += '<p>❌ Failed to fetch</p>';
+                }
+            } catch (error) {
+                output.innerHTML += `<p>❌ Error: ${error.message}</p>`;
+            }
+        }
+        
+        testUrlTransformation();
+    </script>
+</body>
+</html>

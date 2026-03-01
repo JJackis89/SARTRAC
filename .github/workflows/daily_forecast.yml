@@ -120,6 +120,7 @@ jobs:
           echo "Running GEE OLCI AFAI/MCI detection..."
           python scripts/detect_gee_olci.py \
             --date "$FORECAST_DATE" \
+            --lookback 3 \
             --out "data/gee_olci_${FORECAST_DATE}.geojson" \
             --verbose || echo "⚠ GEE OLCI detection failed"
         else
@@ -138,19 +139,27 @@ jobs:
         || echo '{"type":"FeatureCollection","features":[]}' \
              > "data/merged_detections_${FORECAST_DATE}.geojson"
 
-    # ── Drift forecast ──────────────────────────────────────────────
-    - name: Run drift forecast
+    # ── Drift forecast (multi-horizon: 3d, 5d, 7d) ─────────────────
+    - name: Run drift forecasts
       run: |
         args=""
         [ -n "$RESOLVED_CURRENTS_URL" ] && args="$args --currents-url $RESOLVED_CURRENTS_URL"
         [ -n "$RESOLVED_WINDS_URL" ]    && args="$args --winds-url $RESOLVED_WINDS_URL"
 
-        python scripts/forecast_opendrift.py \
-          --detections "data/merged_detections_${FORECAST_DATE}.geojson" \
-          --out "outputs/forecast_${FORECAST_DATE}.geojson" \
-          --hours "$FORECAST_HOURS" --windage 0.01 --particles 5 \
-          --roi data/ghana_20nm.geojson \
-          $args --verbose
+        for HOURS in 72 120 168; do
+          DAYS=$((HOURS / 24))
+          echo "▸ Running ${DAYS}-day (${HOURS}h) forecast..."
+          python scripts/forecast_opendrift.py \
+            --detections "data/merged_detections_${FORECAST_DATE}.geojson" \
+            --out "outputs/forecast_${FORECAST_DATE}_${DAYS}d.geojson" \
+            --hours "$HOURS" --windage 0.01 --particles 5 \
+            --roi data/ghana_20nm.geojson \
+            $args --verbose || echo "  ⚠ ${DAYS}d forecast failed"
+        done
+
+        # Copy the 3-day as the default forecast file for backwards compatibility
+        cp "outputs/forecast_${FORECAST_DATE}_3d.geojson" \
+           "outputs/forecast_${FORECAST_DATE}.geojson" 2>/dev/null || true
 
     # ── Static map (optional) ───────────────────────────────────────
     - name: Generate map
@@ -202,21 +211,27 @@ jobs:
 
         PARTICLES=$(python3 -c "import json; print(len(json.load(open('$FF')).get('features',[])))" 2>/dev/null || echo "?")
         DETECTIONS=$(python3 -c "import json; print(len(json.load(open('$DF')).get('features',[])))" 2>/dev/null || echo "?")
+        P5D=$(python3 -c "import json,pathlib; f=pathlib.Path('outputs/forecast_${FORECAST_DATE}_5d.geojson'); print(len(json.load(open(f)).get('features',[])) if f.exists() else '–')" 2>/dev/null || echo "–")
+        P7D=$(python3 -c "import json,pathlib; f=pathlib.Path('outputs/forecast_${FORECAST_DATE}_7d.geojson'); print(len(json.load(open(f)).get('features',[])) if f.exists() else '–')" 2>/dev/null || echo "–")
 
         cat > release_notes.md <<EOF
         ## Ghana Sargassum Forecast — ${FORECAST_DATE}
 
         | Detail | Value |
         |--------|-------|
-        | Duration | ${FORECAST_HOURS} h (3 days) |
         | Detections | ${DETECTIONS} points |
-        | Forecast particles | ${PARTICLES} |
+        | 3-day forecast | ${PARTICLES} particles |
+        | 5-day forecast | ${P5D} particles |
+        | 7-day forecast | ${P7D} particles |
         | Currents source | ${{ steps.ocean_urls.outputs.currents_source }} |
         | Winds source | ${{ steps.ocean_urls.outputs.winds_source }} |
         | Run | #${{ github.run_number }} |
 
         ### Files
-        - \`forecast_${FORECAST_DATE}.geojson\` — 72 h drift forecast
+        - \`forecast_${FORECAST_DATE}.geojson\` — 3-day drift forecast (default)
+        - \`forecast_${FORECAST_DATE}_3d.geojson\` — 3-day (72 h) drift forecast
+        - \`forecast_${FORECAST_DATE}_5d.geojson\` — 5-day (120 h) drift forecast
+        - \`forecast_${FORECAST_DATE}_7d.geojson\` — 7-day (168 h) drift forecast
         - \`merged_detections_${FORECAST_DATE}.geojson\` — detection points
         - \`map_${FORECAST_DATE}.png\` — static map
 
@@ -225,6 +240,9 @@ jobs:
 
         FILES=""
         [ -f "$FF" ] && FILES="$FILES $FF"
+        [ -f "outputs/forecast_${FORECAST_DATE}_3d.geojson" ] && FILES="$FILES outputs/forecast_${FORECAST_DATE}_3d.geojson"
+        [ -f "outputs/forecast_${FORECAST_DATE}_5d.geojson" ] && FILES="$FILES outputs/forecast_${FORECAST_DATE}_5d.geojson"
+        [ -f "outputs/forecast_${FORECAST_DATE}_7d.geojson" ] && FILES="$FILES outputs/forecast_${FORECAST_DATE}_7d.geojson"
         [ -f "$DF" ] && FILES="$FILES $DF"
         [ -f "$MF" ] && FILES="$FILES $MF"
 
@@ -241,3 +259,23 @@ jobs:
         echo "Release: ${RELEASE_TAG}"
         find data/ outputs/ -name "*${FORECAST_DATE}*" -type f -exec du -h {} \;
         echo "https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
+
+    # ── Alert notifications ─────────────────────────────────────────
+    - name: Send alert notifications
+      continue-on-error: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        SMTP_HOST: ${{ secrets.SMTP_HOST }}
+        SMTP_PORT: ${{ secrets.SMTP_PORT }}
+        SMTP_USER: ${{ secrets.SMTP_USER }}
+        SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+        ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+      run: |
+        python scripts/notify_alerts.py \
+          --forecast "outputs/forecast_${FORECAST_DATE}.geojson" \
+          --detections "data/merged_detections_${FORECAST_DATE}.geojson" \
+          --date "$FORECAST_DATE" \
+          --min-severity moderate \
+          --verbose

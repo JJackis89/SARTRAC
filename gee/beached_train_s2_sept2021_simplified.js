@@ -13,7 +13,7 @@
 // ==================== CONFIGURATION ====================
 
 // UPDATE THIS with your GEE username
-var assetPath = 'users/YOUR_USERNAME/';
+var assetPath = 'users/sartrac/';
 
 // Study region: Ghana coastal zone
 var ghana_coast = ee.Geometry.Polygon([

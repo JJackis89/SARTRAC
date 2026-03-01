@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug SARTRAC Data Loading</title>
+</head>
+<body>
+    <h1>SARTRAC Data Loading Debug</h1>
+    <div id="status">Testing...</div>
+    <pre id="logs" style="background: #f0f0f0; padding: 10px; white-space: pre-wrap;"></pre>
+
+    <script>
+        const logs = document.getElementById('logs');
+        const status = document.getElementById('status');
+        
+        function log(message) {
+            console.log(message);
+            logs.textContent += message + '\n';
+        }
+
+        async function testForecastService() {
+            try {
+                // Test 1: Check if we're in development mode
+                const isDevelopment = window.location.hostname === 'localhost';
+                log(`🔍 isDevelopment: ${isDevelopment}`);
+                
+                // Test 2: Determine API URL
+                const GITHUB_API = isDevelopment 
+                    ? 'http://localhost:3851/api/github/repos/JJackis89/SARTRAC' 
+                    : 'https://api.github.com/repos/JJackis89/SARTRAC';
+                log(`🔗 API URL: ${GITHUB_API}`);
+                
+                // Test 3: Try to fetch latest release
+                log(`🔄 Fetching: ${GITHUB_API}/releases/latest`);
+                const response = await fetch(`${GITHUB_API}/releases/latest`);
+                log(`📊 Response status: ${response.status} ${response.statusText}`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    log(`✅ Success! Release: ${data.tag_name}`);
+                    log(`📅 Published: ${data.published_at}`);
+                    log(`📦 Assets: ${data.assets.length}`);
+                    
+                    // Test 4: Check for forecast asset
+                    const forecastAsset = data.assets.find(asset => 
+                        asset.name.includes('forecast') && asset.name.endsWith('.geojson')
+                    );
+                    
+                    if (forecastAsset) {
+                        log(`🎯 Found forecast asset: ${forecastAsset.name}`);
+                        log(`📥 Download URL: ${forecastAsset.browser_download_url}`);
+                        
+                        // Test 5: Try to download the asset
+                        const assetUrl = forecastAsset.browser_download_url;
+                        const proxyAssetUrl = assetUrl.replace('https://github.com', 'http://localhost:3851/api/releases');
+                        log(`🔄 Trying proxy asset URL: ${proxyAssetUrl}`);
+                        
+                        const assetResponse = await fetch(proxyAssetUrl);
+                        log(`📊 Asset response: ${assetResponse.status} ${assetResponse.statusText}`);
+                        
+                        if (assetResponse.ok) {
+                            const geoJsonText = await assetResponse.text();
+                            log(`✅ Asset downloaded! Size: ${geoJsonText.length} chars`);
+                            
+                            try {
+                                const geoJson = JSON.parse(geoJsonText);
+                                log(`🗺️ GeoJSON features: ${geoJson.features?.length || 'unknown'}`);
+                                status.textContent = '🎉 REAL DATA LOADING WORKS!';
+                                status.style.color = 'green';
+                            } catch (e) {
+                                log(`❌ GeoJSON parse error: ${e.message}`);
+                                status.textContent = '⚠️ Data loading partial success';
+                                status.style.color = 'orange';
+                            }
+                        } else {
+                            log(`❌ Asset download failed`);
+                            status.textContent = '❌ Asset download failed';
+                            status.style.color = 'red';
+                        }
+                    } else {
+                        log(`❌ No forecast asset found in release`);
+                        status.textContent = '❌ No forecast asset';
+                        status.style.color = 'red';
+                    }
+                } else {
+                    log(`❌ API request failed: ${response.status}`);
+                    status.textContent = '❌ API request failed';
+                    status.style.color = 'red';
+                }
+                
+            } catch (error) {
+                log(`💥 Error: ${error.message}`);
+                status.textContent = '💥 Error occurred';
+                status.style.color = 'red';
+            }
+        }
+        
+        // Run test
+        testForecastService();
+    </script>
+</body>
+</html>

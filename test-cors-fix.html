@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CORS Fix Verification</title>
+</head>
+<body>
+    <h1>Testing CORS Proxy</h1>
+    <div id="status">Loading...</div>
+    <pre id="output"></pre>
+
+    <script>
+        async function testProxy() {
+            const statusDiv = document.getElementById('status');
+            const outputDiv = document.getElementById('output');
+            
+            try {
+                statusDiv.textContent = 'Testing GitHub API access...';
+                
+                // Test 1: GitHub API access
+                const apiResponse = await fetch('http://localhost:3851/api/github/repos/JJackis89/SARTRAC/releases/latest');
+                const apiData = await apiResponse.json();
+                
+                outputDiv.textContent += `✅ GitHub API Success!\n`;
+                outputDiv.textContent += `Latest Release: ${apiData.tag_name}\n`;
+                outputDiv.textContent += `Assets: ${apiData.assets.length}\n\n`;
+                
+                // Test 2: Find GeoJSON asset
+                const geoJsonAsset = apiData.assets.find(asset => asset.name.endsWith('.geojson') && asset.name.includes('forecast'));
+                
+                if (geoJsonAsset) {
+                    outputDiv.textContent += `✅ Found forecast file: ${geoJsonAsset.name}\n`;
+                    outputDiv.textContent += `Download URL: ${geoJsonAsset.browser_download_url}\n\n`;
+                    
+                    // Test 3: Try to download via proxy
+                    statusDiv.textContent = 'Testing file download...';
+                    const downloadUrl = geoJsonAsset.browser_download_url.replace('https://github.com', 'http://localhost:3851/api/releases');
+                    outputDiv.textContent += `Proxy URL: ${downloadUrl}\n`;
+                    
+                    const fileResponse = await fetch(downloadUrl);
+                    if (fileResponse.ok) {
+                        const fileData = await fileResponse.text();
+                        outputDiv.textContent += `✅ File download successful! Size: ${fileData.length} chars\n`;
+                        outputDiv.textContent += `Preview: ${fileData.substring(0, 200)}...\n`;
+                        statusDiv.textContent = '🎉 ALL TESTS PASSED - CORS PROXY WORKING!';
+                        statusDiv.style.color = 'green';
+                    } else {
+                        outputDiv.textContent += `❌ File download failed: ${fileResponse.status}\n`;
+                        statusDiv.textContent = '⚠️ API works, file download needs fix';
+                        statusDiv.style.color = 'orange';
+                    }
+                } else {
+                    outputDiv.textContent += `❌ No forecast GeoJSON found in assets\n`;
+                    statusDiv.textContent = '⚠️ No forecast file found';
+                    statusDiv.style.color = 'orange';
+                }
+                
+            } catch (error) {
+                outputDiv.textContent += `❌ Error: ${error.message}\n`;
+                statusDiv.textContent = '❌ CORS proxy test failed';
+                statusDiv.style.color = 'red';
+            }
+        }
+        
+        // Run test when page loads
+        testProxy();
+    </script>
+</body>
+</html>
