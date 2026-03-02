@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { forecastService, ForecastData, LoadingState } from '../services/forecastService';
+import { forecastService, ForecastData, ForecastHorizon, LoadingState } from '../services/forecastService';
 
 export interface ForecastDataState {
   availableForecasts: ForecastData[];
@@ -10,11 +10,13 @@ export interface ForecastDataState {
   lastUpdateTime: Date | null;
   nextUpdateTime: Date | null;
   autoRefreshEnabled: boolean;
+  selectedHorizon: ForecastHorizon;
 }
 
 export interface ForecastDataActions {
   setCurrentForecastIndex: (index: number | ((prev: number) => number)) => void;
   setAutoRefreshEnabled: (enabled: boolean) => void;
+  setSelectedHorizon: (horizon: ForecastHorizon) => void;
   handleManualRefresh: () => Promise<void>;
 }
 
@@ -26,6 +28,7 @@ export function useForecastData(): ForecastDataState & ForecastDataActions {
   const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null);
   const [nextUpdateTime] = useState<Date | null>(null);
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [selectedHorizon, setSelectedHorizon] = useState<ForecastHorizon>('3d');
 
   // Load forecasts from GitHub releases
   useEffect(() => {
@@ -50,7 +53,7 @@ export function useForecastData(): ForecastDataState & ForecastDataActions {
       setError(null);
 
       try {
-        const latestForecast = await forecastService.getLatestForecast();
+        const latestForecast = await forecastService.getLatestForecast(selectedHorizon);
         if (latestForecast) {
           setAvailableForecasts([latestForecast]);
           setLastUpdateTime(new Date());
@@ -96,7 +99,7 @@ export function useForecastData(): ForecastDataState & ForecastDataActions {
       unsubscribe?.();
       forecastService.stopAutoRefresh();
     };
-  }, [autoRefreshEnabled]);
+  }, [autoRefreshEnabled, selectedHorizon]);
 
   const handleManualRefresh = useCallback(async () => {
     setIsLoading(true);
@@ -104,7 +107,7 @@ export function useForecastData(): ForecastDataState & ForecastDataActions {
 
     try {
       forecastService.clearCache();
-      const latestForecast = await forecastService.getLatestForecast();
+      const latestForecast = await forecastService.getLatestForecast(selectedHorizon);
 
       if (latestForecast) {
         const dates = await forecastService.getAvailableForecastDates();
@@ -128,7 +131,7 @@ export function useForecastData(): ForecastDataState & ForecastDataActions {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [selectedHorizon]);
 
   const currentForecast = availableForecasts[currentForecastIndex] || null;
 
@@ -141,8 +144,10 @@ export function useForecastData(): ForecastDataState & ForecastDataActions {
     lastUpdateTime,
     nextUpdateTime,
     autoRefreshEnabled,
+    selectedHorizon,
     setCurrentForecastIndex,
     setAutoRefreshEnabled,
+    setSelectedHorizon,
     handleManualRefresh,
   };
 }

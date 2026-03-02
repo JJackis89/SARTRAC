@@ -83,6 +83,8 @@ function App() {
           autoRefreshEnabled={forecast.autoRefreshEnabled}
           onAutoRefreshChange={forecast.setAutoRefreshEnabled}
           onManualRefresh={forecast.handleManualRefresh}
+          selectedHorizon={forecast.selectedHorizon}
+          onHorizonChange={forecast.setSelectedHorizon}
           showLayers={showLayers}
           onLayersChange={setShowLayers}
           opacity={opacity}

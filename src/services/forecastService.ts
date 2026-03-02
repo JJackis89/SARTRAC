@@ -19,6 +19,8 @@ export interface ForecastParticle {
   forecast_time: string;
 }
 
+export type DataQuality = 'high' | 'medium' | 'low' | 'demo';
+
 export interface ForecastMetadata {
   forecast_start: string;
   forecast_hours: number;
@@ -26,6 +28,11 @@ export interface ForecastMetadata {
   particles_per_point: number;
   seed_points: number;
   generation_time: string;
+  data_sources?: string[];
+  data_quality?: DataQuality;
+  has_real_currents?: boolean;
+  has_real_winds?: boolean;
+  uses_fallback?: boolean;
 }
 
 export interface LoadingState {
@@ -327,6 +334,11 @@ class ForecastService {
         particles_per_point: p.particles_per_point ?? 5,
         seed_points: p.seed_points ?? 0,
         generation_time: p.forecast_time ?? new Date().toISOString(),
+        data_sources: p.data_sources ?? [],
+        data_quality: p.data_quality ?? (particles.length > 0 ? 'medium' : 'low'),
+        has_real_currents: p.has_real_currents ?? false,
+        has_real_winds: p.has_real_winds ?? false,
+        uses_fallback: p.uses_fallback ?? true,
       },
       date,
       isEmpty: particles.length === 0,

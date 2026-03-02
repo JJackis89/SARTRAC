@@ -252,6 +252,16 @@ Color Scale:
                     {availableForecastCount} forecast
                     {availableForecastCount !== 1 ? 's' : ''} available
                   </div>
+                  {currentForecast?.metadata?.data_quality && (
+                    <div className="text-xs mt-1" style={{
+                      color: currentForecast.metadata.data_quality === 'high' ? '#4ade80' :
+                             currentForecast.metadata.data_quality === 'medium' ? '#facc15' : '#fb923c'
+                    }}>
+                      Data: {currentForecast.metadata.data_quality.toUpperCase()}
+                      {currentForecast.metadata.has_real_currents ? ' · HYCOM' : ''}
+                      {currentForecast.metadata.has_real_winds ? ' · GFS' : ''}
+                    </div>
+                  )}
                   {nextUpdateTime && (
                     <div className="text-xs" style={{ color: 'var(--teal-foam)' }}>
                       Next check: {nextUpdateTime.toLocaleTimeString()}

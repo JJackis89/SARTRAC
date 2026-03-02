@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { X, ChevronDown, Info, Activity } from 'lucide-react';
-import { ForecastData } from '../services/forecastService';
+import { ForecastData, ForecastHorizon } from '../services/forecastService';
 import { forecastService } from '../services/forecastService';
 
 interface ShowLayers {
@@ -25,6 +25,9 @@ interface ControlDrawerProps {
   autoRefreshEnabled: boolean;
   onAutoRefreshChange: (enabled: boolean) => void;
   onManualRefresh: () => Promise<void>;
+  // Horizon
+  selectedHorizon: ForecastHorizon;
+  onHorizonChange: (horizon: ForecastHorizon) => void;
   // Layer state
   showLayers: ShowLayers;
   onLayersChange: (layers: ShowLayers) => void;
@@ -54,6 +57,8 @@ export function ControlDrawer({
   autoRefreshEnabled,
   onAutoRefreshChange,
   onManualRefresh,
+  selectedHorizon,
+  onHorizonChange,
   showLayers,
   onLayersChange,
   opacity,
@@ -130,6 +135,8 @@ export function ControlDrawer({
               onForecastToggle={(v) => updateLayer('forecast', v)}
               onAutoRefreshChange={onAutoRefreshChange}
               onManualRefresh={onManualRefresh}
+              selectedHorizon={selectedHorizon}
+              onHorizonChange={onHorizonChange}
             />
 
             {/* Data Layers */}
@@ -408,6 +415,8 @@ function ForecastSystemCard({
   onForecastToggle,
   onAutoRefreshChange,
   onManualRefresh,
+  selectedHorizon,
+  onHorizonChange,
 }: {
   isLoading: boolean;
   error: string | null;
@@ -419,7 +428,23 @@ function ForecastSystemCard({
   onForecastToggle: (v: boolean) => void;
   onAutoRefreshChange: (v: boolean) => void;
   onManualRefresh: () => Promise<void>;
+  selectedHorizon: ForecastHorizon;
+  onHorizonChange: (h: ForecastHorizon) => void;
 }) {
+  const qualityColor = (q?: string) => {
+    switch (q) {
+      case 'high': return 'text-green-400';
+      case 'medium': return 'text-yellow-400';
+      default: return 'text-orange-400';
+    }
+  };
+  const qualityLabel = (q?: string) => {
+    switch (q) {
+      case 'high': return 'High — real currents + winds';
+      case 'medium': return 'Medium — real currents only';
+      default: return 'Low — using fallback data';
+    }
+  };
   return (
     <div className="rounded-xl p-4 border border-green-500/20 bg-gradient-to-br from-green-900/20 to-blue-900/20 backdrop-blur-sm">
       <div className="flex items-center justify-between mb-4">
@@ -496,6 +521,16 @@ function ForecastSystemCard({
                       {currentForecast.isDemoData ? 'Demo Mode' : currentForecast.isEmpty ? 'No Detection' : 'Active'}
                     </span>
                   </div>
+                  {currentForecast.metadata.data_quality && (
+                    <div className="flex justify-between">
+                      <span>Data Quality:</span>
+                      <span className={`font-medium ${qualityColor(currentForecast.metadata.data_quality)}`}>
+                        {currentForecast.metadata.data_quality === 'high' ? '●●●' :
+                         currentForecast.metadata.data_quality === 'medium' ? '●●○' : '●○○'}
+                        {' '}{(currentForecast.metadata.data_quality ?? 'low').toUpperCase()}
+                      </span>
+                    </div>
+                  )}
                 </>
               )}
               {lastUpdateTime && (
@@ -505,6 +540,50 @@ function ForecastSystemCard({
                 </div>
               )}
             </div>
+
+            {/* Forecast Horizon Selector */}
+            <div className="mt-3 pt-2 border-t border-gray-600/30">
+              <label className="block text-xs font-medium text-gray-300 mb-2">Forecast Horizon</label>
+              <div className="flex space-x-1">
+                {(['3d', '5d', '7d'] as ForecastHorizon[]).map((h) => (
+                  <button
+                    key={h}
+                    onClick={() => onHorizonChange(h)}
+                    className={`flex-1 text-xs px-2 py-1.5 rounded-md font-medium transition-all duration-200 ${
+                      selectedHorizon === h
+                        ? 'bg-teal-600 text-white shadow-md'
+                        : 'bg-gray-700/50 text-gray-400 hover:bg-gray-600/50 hover:text-gray-200'
+                    }`}
+                  >
+                    {h === '3d' ? '3 Day' : h === '5d' ? '5 Day' : '7 Day'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Data Quality Details */}
+            {currentForecast?.metadata.data_sources && currentForecast.metadata.data_sources.length > 0 && (
+              <div className="mt-2 p-2 rounded-md bg-gray-800/40 border border-gray-700/40">
+                <div className="text-xs text-gray-400 mb-1 font-medium">Data Sources</div>
+                <div className="text-xs text-gray-300 space-y-0.5">
+                  <div className="flex items-center space-x-1.5">
+                    <span className={currentForecast.metadata.has_real_currents ? 'text-green-400' : 'text-orange-400'}>
+                      {currentForecast.metadata.has_real_currents ? '✓' : '⚠'}
+                    </span>
+                    <span>Currents: {currentForecast.metadata.has_real_currents ? 'HYCOM ocean model' : 'Constant fallback'}</span>
+                  </div>
+                  <div className="flex items-center space-x-1.5">
+                    <span className={currentForecast.metadata.has_real_winds ? 'text-green-400' : 'text-orange-400'}>
+                      {currentForecast.metadata.has_real_winds ? '✓' : '⚠'}
+                    </span>
+                    <span>Winds: {currentForecast.metadata.has_real_winds ? 'GFS forecast' : 'Constant fallback'}</span>
+                  </div>
+                </div>
+                <div className="text-xs text-gray-500 mt-1" title={qualityLabel(currentForecast.metadata.data_quality)}>
+                  {qualityLabel(currentForecast.metadata.data_quality)}
+                </div>
+              </div>
+            )}
 
             <div className="mt-3 pt-2 border-t border-gray-600/30">
               <label className="flex items-center justify-between text-xs">

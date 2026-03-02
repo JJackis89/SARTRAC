@@ -112,14 +112,17 @@ def download_hycom(date_str: str, hours: int, out_dir: Path) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# GFS winds
+# GFS winds — download as NetCDF via THREDDS NCSS
 # ---------------------------------------------------------------------------
 
 def download_gfs(date_str: str, hours: int, out_dir: Path) -> str | None:
     """
-    Download GFS wind data as GRIB2 from NOMADS.
+    Download GFS 10-m wind data as NetCDF via UCAR THREDDS NCSS.
 
-    Falls back to previous cycle if current isn't available yet.
+    Uses the NetCDF Subset Service to get CF-compliant NetCDF that
+    OpenDrift's reader_netCDF_CF_generic can read directly.
+
+    Falls back to NCEP reanalysis winds if GFS is unavailable.
 
     Args:
         date_str: Forecast start date (YYYY-MM-DD)
@@ -127,64 +130,81 @@ def download_gfs(date_str: str, hours: int, out_dir: Path) -> str | None:
         out_dir: Output directory
 
     Returns:
-        Path to downloaded GRIB file, or None on failure
+        Path to downloaded NetCDF file, or None on failure
     """
     start = datetime.strptime(date_str, '%Y-%m-%d')
-    out_file = out_dir / f'gfs_{date_str}.grb2'
+    end = start + timedelta(hours=hours + 24)
+    out_file = out_dir / f'gfs_winds_{date_str}.nc'
 
-    # Try current day 00z, then yesterday 12z, then yesterday 00z
-    cycles = [
-        (start, '00'),
-        (start - timedelta(days=1), '12'),
-        (start - timedelta(days=1), '00'),
-    ]
+    # --- Method 1: UCAR THREDDS NCSS (NetCDF format) ---
+    # This gives us CF-compliant NetCDF that OpenDrift can read directly
+    base = 'https://thredds.ucar.edu/thredds/ncss/grib/NCEP/GFS/Global_0p25deg/Best'
+    params = {
+        'var': ['u-component_of_wind_height_above_ground',
+                'v-component_of_wind_height_above_ground'],
+        'north': ROI['north'],
+        'south': ROI['south'],
+        'east': ROI['east'],
+        'west': ROI['west'],
+        'disableProjSubset': 'on',
+        'horizStride': 4,           # ~1° resolution (save bandwidth)
+        'time_start': start.strftime('%Y-%m-%dT00:00:00Z'),
+        'time_end': end.strftime('%Y-%m-%dT00:00:00Z'),
+        'timeStride': 2,            # every other time step
+        'vertCoord': 10,            # 10m above ground
+        'addLatLon': 'true',
+        'accept': 'netcdf',
+    }
 
-    for cycle_date, cycle_hour in cycles:
-        ds = cycle_date.strftime('%Y%m%d')
-        # GFS filter service — download only u/v winds at 10m for our subregion
-        base = 'https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl'
+    query_parts = []
+    for k, v in params.items():
+        if isinstance(v, list):
+            for item in v:
+                query_parts.append(f'var={item}')
+        else:
+            query_parts.append(f'{k}={v}')
+    url = f'{base}?{"&".join(query_parts)}'
 
-        # Download a few forecast hours to cover our time range
-        forecast_hours = list(range(0, min(hours + 24, 120), 6))
-        downloaded_any = False
+    logger.info(f'Downloading GFS winds (THREDDS NCSS) for {date_str} ({hours}h)...')
+    logger.debug(f'URL: {url}')
 
-        for fhr in forecast_hours[:1]:  # Just get analysis (f000) for simplicity
-            params = {
-                'file': f'gfs.t{cycle_hour}z.pgrb2.0p25.f{fhr:03d}',
-                'lev_10_m_above_ground': 'on',
-                'var_UGRD': 'on',
-                'var_VGRD': 'on',
-                'subregion': '',
-                'leftlon': ROI['west'],
-                'rightlon': ROI['east'],
-                'toplat': ROI['north'],
-                'bottomlat': ROI['south'],
-                'dir': f'/gfs.{ds}/{cycle_hour}/atmos',
-            }
-            query = '&'.join(f'{k}={v}' for k, v in params.items())
-            url = f'{base}?{query}'
+    for attempt in range(2):
+        try:
+            req = Request(url, headers={'User-Agent': 'SARTRAC/1.0'})
+            with urlopen(req, timeout=90) as resp:
+                data = resp.read()
 
-            logger.debug(f'GFS URL: {url}')
+            if len(data) < 1000:
+                logger.warning(f'GFS THREDDS response too small ({len(data)} bytes)')
+                break
 
-            try:
-                req = Request(url, headers={'User-Agent': 'SARTRAC/1.0'})
-                with urlopen(req, timeout=60) as resp:
-                    data = resp.read()
+            out_file.write_bytes(data)
+            size_kb = len(data) / 1024
+            logger.info(f'GFS winds downloaded: {out_file} ({size_kb:.0f} KB)')
+            return str(out_file)
 
-                if len(data) < 500:
-                    logger.debug(f'GFS {ds}/{cycle_hour}z f{fhr:03d} too small, skipping')
-                    continue
+        except (URLError, HTTPError, TimeoutError, OSError) as e:
+            logger.warning(f'GFS THREDDS attempt {attempt + 1} failed: {e}')
+            time.sleep(5)
 
-                out_file.write_bytes(data)
-                size_kb = len(data) / 1024
-                logger.info(f'GFS downloaded: {out_file} ({size_kb:.0f} KB) — cycle {ds}/{cycle_hour}z')
-                return str(out_file)
+    # --- Method 2: NCEP reanalysis winds via xarray OPeNDAP ---
+    logger.info('GFS THREDDS failed, trying NCEP reanalysis winds...')
+    try:
+        import xarray as xr
+        ncep_url = 'https://psl.noaa.gov/thredds/dodsC/Datasets/ncep.reanalysis2/gaussian_grid/uwnd.10m.gauss.latest.nc'
+        ds = xr.open_dataset(ncep_url)
+        subset = ds.sel(
+            lat=slice(ROI['north'], ROI['south']),
+            lon=slice(360 + ROI['west'], 360 + ROI['east']),  # NCEP uses 0-360 lon
+        )
+        ncep_out = out_dir / f'ncep_winds_{date_str}.nc'
+        subset.to_netcdf(str(ncep_out))
+        logger.info(f'NCEP reanalysis winds downloaded: {ncep_out}')
+        return str(ncep_out)
+    except Exception as e:
+        logger.debug(f'NCEP reanalysis failed: {e}')
 
-            except (URLError, HTTPError, TimeoutError, OSError) as e:
-                logger.debug(f'GFS {ds}/{cycle_hour}z failed: {e}')
-                continue
-
-    logger.error('GFS download failed — all cycles attempted')
+    logger.error('All wind download methods failed')
     return None
 
 
@@ -234,6 +254,28 @@ def download_cmems(date_str: str, hours: int, out_dir: Path) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+def validate_netcdf(filepath: str) -> bool:
+    """Quick check that a NetCDF file opens and has data variables."""
+    try:
+        import netCDF4
+        with netCDF4.Dataset(filepath, 'r') as ds:
+            if len(ds.variables) < 2:
+                logger.warning(f'NetCDF has only {len(ds.variables)} variables: {list(ds.variables)}')
+                return False
+            logger.debug(f'Validated NetCDF: {filepath} — vars: {list(ds.variables.keys())}')
+            return True
+    except ImportError:
+        # netCDF4 not available, skip validation
+        return True
+    except Exception as e:
+        logger.warning(f'NetCDF validation failed for {filepath}: {e}')
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -257,17 +299,25 @@ def main():
 
     # --- Currents: try HYCOM first, then CMEMS ---
     currents_file = download_hycom(args.date, args.hours, out_dir)
+    if currents_file and not validate_netcdf(currents_file):
+        logger.warning('HYCOM file failed validation, discarding')
+        currents_file = None
     if not currents_file:
         logger.info('HYCOM failed, trying Copernicus Marine...')
         currents_file = download_cmems(args.date, args.hours, out_dir)
 
     results['currents_file'] = currents_file or ''
 
-    # --- Winds: try GFS ---
+    # --- Winds: try GFS (THREDDS NCSS → NCEP reanalysis) ---
     winds_file = download_gfs(args.date, args.hours, out_dir)
+    if winds_file and winds_file.endswith('.nc') and not validate_netcdf(winds_file):
+        logger.warning('GFS winds file failed validation, discarding')
+        winds_file = None
     results['winds_file'] = winds_file or ''
 
     # --- Summary ---
+    success_count = sum(1 for v in results.values() if v)
+    logger.info(f'Download complete: {success_count}/2 datasets obtained')
     if currents_file:
         logger.info(f'✓ Currents: {currents_file}')
     else:

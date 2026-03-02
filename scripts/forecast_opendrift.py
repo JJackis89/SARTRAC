@@ -309,34 +309,70 @@ class SargassumForecaster:
     
     def save_results(self, gdf, output_path, metadata=None):
         """
-        Save forecast results to GeoJSON.
-        
+        Save forecast results to GeoJSON with collection-level metadata.
+
+        The output GeoJSON has top-level ``properties`` so the frontend
+        can inspect ``data_sources``, ``uses_fallback``, etc. without
+        scanning every feature.
+
         Args:
             gdf: GeoDataFrame with results
             output_path: Output file path
             metadata: Additional metadata dictionary
         """
         try:
-            # Add metadata
+            import json as _json
+            from datetime import timezone
+
+            # Per-feature columns
             if metadata:
                 for key, value in metadata.items():
                     gdf[key] = value
-            
-            # Add forecast timestamp and data source info
-            from datetime import timezone
-            gdf['forecast_time'] = datetime.now(timezone.utc).isoformat()
-            gdf['data_source'] = ','.join(self.readers_added)
-            gdf['uses_fallback'] = any('fallback' in r for r in self.readers_added)
-            
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+            gdf['forecast_time'] = now_iso
+
+            # Determine data quality
+            data_sources = list(self.readers_added)
+            uses_fallback = any('fallback' in r for r in data_sources)
+            has_real_currents = any(r in ('currents_file', 'currents_url') for r in data_sources)
+            has_real_winds = any(r in ('winds_file', 'winds_url') for r in data_sources)
+
+            # Per-feature source tag
+            gdf['data_source'] = ','.join(data_sources)
+            gdf['uses_fallback'] = uses_fallback
+
             # Ensure output directory exists
             output_path = Path(output_path)
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Save to GeoJSON
-            gdf.to_file(output_path, driver='GeoJSON')
-            
+
+            # Write GeoJSON manually so we can add top-level "properties"
+            geo_dict = _json.loads(gdf.to_json())
+            geo_dict['properties'] = {
+                'forecast_time': now_iso,
+                'forecast_start': metadata.get('forecast_start', now_iso) if metadata else now_iso,
+                'forecast_hours': metadata.get('forecast_hours', 72) if metadata else 72,
+                'windage': metadata.get('windage', 0.01) if metadata else 0.01,
+                'particles_per_point': metadata.get('particles_per_point', 0) if metadata else 0,
+                'seed_points': metadata.get('seed_points', 0) if metadata else 0,
+                'data_sources': data_sources,
+                'uses_fallback': uses_fallback,
+                'has_real_currents': has_real_currents,
+                'has_real_winds': has_real_winds,
+                'data_quality': (
+                    'high' if has_real_currents and has_real_winds else
+                    'medium' if has_real_currents else
+                    'low'
+                ),
+            }
+
+            with open(output_path, 'w') as f:
+                _json.dump(geo_dict, f)
+
             logger.info(f"Saved {len(gdf)} forecast particles to {output_path}")
-            
+            logger.info(f"Data quality: {geo_dict['properties']['data_quality']} "
+                        f"(sources: {', '.join(data_sources)})")
+
         except Exception as e:
             logger.error(f"Failed to save results: {e}")
             raise
