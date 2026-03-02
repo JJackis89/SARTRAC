@@ -112,17 +112,20 @@ def download_hycom(date_str: str, hours: int, out_dir: Path) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# GFS winds — download as NetCDF via THREDDS NCSS
+# GFS winds — download as local NetCDF via xarray OPeNDAP
 # ---------------------------------------------------------------------------
 
 def download_gfs(date_str: str, hours: int, out_dir: Path) -> str | None:
     """
-    Download GFS 10-m wind data as NetCDF via UCAR THREDDS NCSS.
+    Download GFS 10-m wind data as a local NetCDF file.
 
-    Uses the NetCDF Subset Service to get CF-compliant NetCDF that
-    OpenDrift's reader_netCDF_CF_generic can read directly.
+    Tries multiple OPeNDAP sources via xarray, saving a spatial/temporal
+    subset to a local file that OpenDrift can read directly.
 
-    Falls back to NCEP reanalysis winds if GFS is unavailable.
+    Priority chain:
+      1. NOMADS GFS 0.25° OPeNDAP (latest run)
+      2. UCAR THREDDS GFS "Best" OPeNDAP virtual dataset
+      3. NCEP reanalysis-2 OPeNDAP
 
     Args:
         date_str: Forecast start date (YYYY-MM-DD)
@@ -132,80 +135,152 @@ def download_gfs(date_str: str, hours: int, out_dir: Path) -> str | None:
     Returns:
         Path to downloaded NetCDF file, or None on failure
     """
+    import xarray as xr
+
     start = datetime.strptime(date_str, '%Y-%m-%d')
     end = start + timedelta(hours=hours + 24)
-    out_file = out_dir / f'gfs_winds_{date_str}.nc'
 
-    # --- Method 1: UCAR THREDDS NCSS (NetCDF format) ---
-    # This gives us CF-compliant NetCDF that OpenDrift can read directly
-    base = 'https://thredds.ucar.edu/thredds/ncss/grib/NCEP/GFS/Global_0p25deg/Best'
-    params = {
-        'var': ['u-component_of_wind_height_above_ground',
-                'v-component_of_wind_height_above_ground'],
-        'north': ROI['north'],
-        'south': ROI['south'],
-        'east': ROI['east'],
-        'west': ROI['west'],
-        'disableProjSubset': 'on',
-        'horizStride': 4,           # ~1° resolution (save bandwidth)
-        'time_start': start.strftime('%Y-%m-%dT00:00:00Z'),
-        'time_end': end.strftime('%Y-%m-%dT00:00:00Z'),
-        'timeStride': 2,            # every other time step
-        'vertCoord': 10,            # 10m above ground
-        'addLatLon': 'true',
-        'accept': 'netcdf',
-    }
+    sources = _build_gfs_sources(date_str, start, end)
 
-    query_parts = []
-    for k, v in params.items():
-        if isinstance(v, list):
-            for item in v:
-                query_parts.append(f'var={item}')
-        else:
-            query_parts.append(f'{k}={v}')
-    url = f'{base}?{"&".join(query_parts)}'
-
-    logger.info(f'Downloading GFS winds (THREDDS NCSS) for {date_str} ({hours}h)...')
-    logger.debug(f'URL: {url}')
-
-    for attempt in range(2):
+    for name, cfg in sources.items():
+        logger.info(f'Trying wind source: {name}...')
+        logger.debug(f'URL: {cfg["url"]}')
         try:
-            req = Request(url, headers={'User-Agent': 'SARTRAC/1.0'})
-            with urlopen(req, timeout=90) as resp:
-                data = resp.read()
+            ds = xr.open_dataset(cfg['url'], engine='netcdf4')
+            logger.debug(f'{name} opened — variables: {list(ds.data_vars)}')
 
-            if len(data) < 1000:
-                logger.warning(f'GFS THREDDS response too small ({len(data)} bytes)')
-                break
+            # Subset spatially & temporally
+            subset = _subset_wind_dataset(ds, cfg, start, end)
 
-            out_file.write_bytes(data)
-            size_kb = len(data) / 1024
+            if subset is None or all(v.size == 0 for v in subset.data_vars.values()):
+                logger.warning(f'{name}: empty after subsetting, skipping')
+                ds.close()
+                continue
+
+            out_file = out_dir / f'gfs_winds_{date_str}.nc'
+            subset.to_netcdf(str(out_file))
+            ds.close()
+
+            size_kb = out_file.stat().st_size / 1024
             logger.info(f'GFS winds downloaded: {out_file} ({size_kb:.0f} KB)')
             return str(out_file)
 
-        except (URLError, HTTPError, TimeoutError, OSError) as e:
-            logger.warning(f'GFS THREDDS attempt {attempt + 1} failed: {e}')
-            time.sleep(5)
-
-    # --- Method 2: NCEP reanalysis winds via xarray OPeNDAP ---
-    logger.info('GFS THREDDS failed, trying NCEP reanalysis winds...')
-    try:
-        import xarray as xr
-        ncep_url = 'https://psl.noaa.gov/thredds/dodsC/Datasets/ncep.reanalysis2/gaussian_grid/uwnd.10m.gauss.latest.nc'
-        ds = xr.open_dataset(ncep_url)
-        subset = ds.sel(
-            lat=slice(ROI['north'], ROI['south']),
-            lon=slice(360 + ROI['west'], 360 + ROI['east']),  # NCEP uses 0-360 lon
-        )
-        ncep_out = out_dir / f'ncep_winds_{date_str}.nc'
-        subset.to_netcdf(str(ncep_out))
-        logger.info(f'NCEP reanalysis winds downloaded: {ncep_out}')
-        return str(ncep_out)
-    except Exception as e:
-        logger.debug(f'NCEP reanalysis failed: {e}')
+        except Exception as e:
+            logger.warning(f'{name} failed: {e}')
+            continue
 
     logger.error('All wind download methods failed')
     return None
+
+
+def _build_gfs_sources(date_str: str, start: datetime, end: datetime) -> dict:
+    """Build ordered dict of wind data sources to try."""
+    sources = {}
+
+    # --- 1. NOMADS GFS OPeNDAP (latest 00z run) ---
+    nomads_date = start.strftime('%Y%m%d')
+    sources['NOMADS-GFS'] = {
+        'url': f'https://nomads.ncep.noaa.gov/dods/gfs_0p25/gfs{nomads_date}/gfs_0p25_00z',
+        'u_var': 'ugrd10m',
+        'v_var': 'vgrd10m',
+        'lat_var': 'lat',
+        'lon_var': 'lon',
+        'time_var': 'time',
+        'lon_convention': '-180',   # NOMADS uses -180 to 180
+    }
+
+    # --- 2. UCAR THREDDS GFS Best virtual dataset ---
+    sources['UCAR-THREDDS'] = {
+        'url': 'https://thredds.ucar.edu/thredds/dodsC/grib/NCEP/GFS/Global_0p25deg/Best',
+        'u_var': 'u-component_of_wind_height_above_ground',
+        'v_var': 'v-component_of_wind_height_above_ground',
+        'lat_var': 'lat',
+        'lon_var': 'lon',
+        'time_var': 'time',
+        'lon_convention': '-180',
+    }
+
+    # --- 3. NCEP Reanalysis-2 (coarser, ~1.9° gaussian grid) ---
+    sources['NCEP-Reanalysis'] = {
+        'url': 'https://psl.noaa.gov/thredds/dodsC/Datasets/ncep.reanalysis2/gaussian_grid/uwnd.10m.gauss.latest.nc',
+        'u_var': 'uwnd',
+        'v_var': None,              # v-wind is in separate file
+        'v_url': 'https://psl.noaa.gov/thredds/dodsC/Datasets/ncep.reanalysis2/gaussian_grid/vwnd.10m.gauss.latest.nc',
+        'lat_var': 'lat',
+        'lon_var': 'lon',
+        'time_var': 'time',
+        'lon_convention': '0-360',  # NCEP uses 0-360
+    }
+
+    return sources
+
+
+def _subset_wind_dataset(ds, cfg: dict, start: datetime, end: datetime):
+    """Extract spatial & temporal ROI from a wind dataset."""
+    import xarray as xr
+
+    lat_var = cfg['lat_var']
+    lon_var = cfg['lon_var']
+    time_var = cfg['time_var']
+    u_var = cfg['u_var']
+    v_var = cfg.get('v_var')
+
+    # Determine lat slice direction (some datasets are N→S, others S→N)
+    try:
+        lats = ds[lat_var].values
+        lat_ascending = lats[-1] > lats[0]
+        if lat_ascending:
+            lat_slice = slice(ROI['south'], ROI['north'])
+        else:
+            lat_slice = slice(ROI['north'], ROI['south'])
+    except Exception:
+        lat_slice = slice(ROI['south'], ROI['north'])
+
+    # Handle longitude convention
+    if cfg.get('lon_convention') == '0-360':
+        west = 360 + ROI['west'] if ROI['west'] < 0 else ROI['west']
+        east = 360 + ROI['east'] if ROI['east'] < 0 else ROI['east']
+    else:
+        west, east = ROI['west'], ROI['east']
+    lon_slice = slice(west, east)
+
+    # Build selection dict
+    sel = {lat_var: lat_slice, lon_var: lon_slice}
+
+    # Time selection — only if dataset has a time dimension
+    if time_var in ds.dims:
+        sel[time_var] = slice(
+            start.strftime('%Y-%m-%dT00:00:00'),
+            end.strftime('%Y-%m-%dT00:00:00'),
+        )
+
+    # Select variables
+    vars_to_keep = [v for v in [u_var, v_var] if v and v in ds.data_vars]
+    if not vars_to_keep:
+        logger.warning(f'No wind variables found in dataset. Available: {list(ds.data_vars)}')
+        return None
+
+    subset = ds[vars_to_keep].sel(**sel)
+
+    # If v-wind is in a separate file (NCEP reanalysis), merge it
+    if v_var is None and 'v_url' in cfg:
+        try:
+            v_ds = xr.open_dataset(cfg['v_url'], engine='netcdf4')
+            v_data = v_ds[['vwnd']].sel(**sel)
+            subset = xr.merge([subset, v_data])
+            v_ds.close()
+        except Exception as e:
+            logger.warning(f'Failed to load v-wind file: {e}')
+
+    # Coarsen to reduce file size (~every 4th point)
+    try:
+        spatial_dims = {d: 4 for d in [lat_var, lon_var] if d in subset.dims and subset.sizes[d] > 8}
+        if spatial_dims:
+            subset = subset.coarsen(**spatial_dims, boundary='trim').mean()
+    except Exception:
+        pass  # skip coarsening on error
+
+    return subset
 
 
 # ---------------------------------------------------------------------------

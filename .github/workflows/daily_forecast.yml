@@ -50,7 +50,10 @@ jobs:
         echo "FORECAST_DATE=$(date -u +%Y-%m-%d)" >> $GITHUB_ENV
         echo "FORECAST_HOURS=72" >> $GITHUB_ENV
         echo "RELEASE_TAG=forecast-$(date -u +%Y-%m-%d)" >> $GITHUB_ENV
-        echo "DEFAULT_WINDS_URL=https://nomads.ncep.noaa.gov/dods/gfs_0p25/gfs$(date -u +%Y%m%d)/gfs_0p25_00z" >> $GITHUB_ENV
+        # Note: NOMADS OPeNDAP was retired (SCN 25-81). Wind data is now
+        # downloaded as local NetCDF by download_ocean_data.py (UCAR THREDDS).
+        # DEFAULT_WINDS_URL kept only as a last-resort fallback if secrets set.
+        echo "DEFAULT_WINDS_URL=" >> $GITHUB_ENV
 
     - name: Create output directories
       run: mkdir -p data outputs
