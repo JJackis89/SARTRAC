@@ -98,15 +98,23 @@ jobs:
     - name: Run ERDDAP detections
       continue-on-error: true
       run: |
-        # Query only active S3 datasets (VIIRS NOAA-20 data ended 2021)
-        # Use --lookback 7 because satellite data has 1-7 day latency
-        # and individual days may be fully cloud-covered.
+        # Query active S3 datasets (VIIRS NOAA-20 data ended 2021)
+        # Use --lookback 14 because the Gulf of Guinea — especially the
+        # Western Region near CoastSnap monitoring points — suffers from
+        # persistent cloud cover that can blank out an entire week.  A 14-day
+        # window gives the pipeline a much better chance of finding a
+        # cloud-free overpass.
         # Threshold 0.3 mg/m³ is appropriate for Gulf of Guinea Sargassum.
-        for ds in s3a_olci_chla s3b_olci_chla; do
+        #
+        # Datasets queried:
+        #   s3a_olci_chla  — Sentinel-3A OLCI Global 4 km (most reliable)
+        #   s3b_olci_chla  — Sentinel-3B OLCI Global 4 km
+        #   s3a_olci_sector — Sentinel-3A OLCI Sector CG 300 m (West Africa)
+        for ds in s3a_olci_chla s3b_olci_chla s3a_olci_sector; do
           echo "  → $ds"
           python scripts/detect_erddap_afai.py \
             --date "$FORECAST_DATE" --dataset "$ds" --threshold 0.3 \
-            --lookback 7 \
+            --lookback 14 \
             --roi data/ghana_20nm.geojson \
             --out "data/${ds}_${FORECAST_DATE}.geojson" \
             --verbose || echo "  ⚠ $ds failed"
@@ -123,7 +131,7 @@ jobs:
           echo "Running GEE OLCI AFAI/MCI detection..."
           python scripts/detect_gee_olci.py \
             --date "$FORECAST_DATE" \
-            --lookback 7 \
+            --lookback 14 \
             --out "data/gee_olci_${FORECAST_DATE}.geojson" \
             --verbose || echo "⚠ GEE OLCI detection failed"
         else

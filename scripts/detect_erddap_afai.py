@@ -411,8 +411,8 @@ def main():
     parser.add_argument('--out', required=True, help='Output GeoJSON file')
     parser.add_argument('--bbox', nargs=4, type=float, metavar=('minLon', 'maxLon', 'minLat', 'maxLat'),
                        help='Custom bounding box')
-    parser.add_argument('--lookback', type=int, default=7,
-                       help='Days to look back for cloud-free data (default 7)')
+    parser.add_argument('--lookback', type=int, default=14,
+                       help='Days to look back for cloud-free data (default 14)')
     parser.add_argument('--config', default='config/datasets.yaml',
                        help='Dataset configuration file')
     parser.add_argument('--verbose', '-v', action='store_true',
