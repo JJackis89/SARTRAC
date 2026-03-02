@@ -66,6 +66,7 @@ data/*.tif
 data/*.tiff
 data/*.nc
 data/*.csv
+data/ocean/
 
 # Output files
 outputs/*.geojson

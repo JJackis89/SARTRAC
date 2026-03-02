@@ -48,44 +48,65 @@ class SargassumForecaster:
         
         logger.info(f"Model configured with windage: {windage}")
         
-    def add_readers(self, currents_url=None, winds_url=None):
+    def add_readers(self, currents_url=None, winds_url=None,
+                     currents_file=None, winds_file=None):
         """
         Add data readers for ocean currents and winds.
-        
+
+        Priority: local files → OPeNDAP URLs → constant fallback.
+
         Args:
-            currents_url: OPeNDAP URL for ocean currents (CF-compliant)
-            winds_url: OPeNDAP URL for wind data (CF-compliant)
+            currents_url: OPeNDAP URL for ocean currents
+            winds_url: OPeNDAP URL for wind data
+            currents_file: Local NetCDF file with ocean currents
+            winds_file: Local NetCDF/GRIB file with wind data
         """
         readers_added = 0
-        
-        # Add ocean currents reader
+
+        # --- Currents: local file first, then OPeNDAP ---
+        currents_sources = []
+        if currents_file and Path(currents_file).exists():
+            currents_sources.append(('file', currents_file))
         if currents_url:
+            currents_sources.append(('url', currents_url))
+
+        for src_type, src in currents_sources:
             try:
-                logger.info(f"Adding currents reader: {currents_url}")
-                currents_reader = reader_netCDF_CF_generic.Reader(currents_url)
-                self.model.add_reader(currents_reader)
-                self.readers_added.append('currents')
+                logger.info(f"Adding currents reader ({src_type}): {src}")
+                reader = reader_netCDF_CF_generic.Reader(src)
+                self.model.add_reader(reader)
+                self.readers_added.append(f'currents_{src_type}')
                 readers_added += 1
-                logger.info("Ocean currents reader added successfully")
+                logger.info(f"Ocean currents reader added from {src_type}")
+                break
             except Exception as e:
-                logger.error(f"Failed to add currents reader: {e}")
-        
-        # Add winds reader
+                logger.warning(f"Currents reader failed ({src_type}): {e}")
+
+        # --- Winds: local file first, then OPeNDAP ---
+        winds_sources = []
+        if winds_file and Path(winds_file).exists():
+            winds_sources.append(('file', winds_file))
         if winds_url:
+            winds_sources.append(('url', winds_url))
+
+        for src_type, src in winds_sources:
             try:
-                logger.info(f"Adding winds reader: {winds_url}")
-                winds_reader = reader_netCDF_CF_generic.Reader(winds_url)
-                self.model.add_reader(winds_reader)
-                self.readers_added.append('winds')
+                logger.info(f"Adding winds reader ({src_type}): {src}")
+                reader = reader_netCDF_CF_generic.Reader(src)
+                self.model.add_reader(reader)
+                self.readers_added.append(f'winds_{src_type}')
                 readers_added += 1
-                logger.info("Winds reader added successfully")
+                logger.info(f"Winds reader added from {src_type}")
+                break
             except Exception as e:
-                logger.error(f"Failed to add winds reader: {e}")
-        
-        # Add fallback readers if needed
-        if 'currents' not in self.readers_added:
+                logger.warning(f"Winds reader failed ({src_type}): {e}")
+
+        # --- Fallback constant readers ---
+        has_currents = any('currents' in r and 'fallback' not in r for r in self.readers_added)
+        has_winds = any('winds' in r and 'fallback' not in r for r in self.readers_added)
+
+        if not has_currents:
             logger.warning("Adding fallback constant current reader — forecast accuracy will be reduced")
-            # Representative westward surface current for Gulf of Guinea
             fallback_current = reader_constant.Reader({
                 'x_sea_water_velocity': -0.3,  # m/s westward
                 'y_sea_water_velocity': 0.1,   # m/s northward
@@ -93,10 +114,9 @@ class SargassumForecaster:
             self.model.add_reader(fallback_current)
             self.readers_added.append('fallback_currents')
             readers_added += 1
-        
-        if 'winds' not in self.readers_added:
+
+        if not has_winds:
             logger.warning("Adding fallback constant wind reader — forecast accuracy will be reduced")
-            # Representative SW winds for Gulf of Guinea
             fallback_winds = reader_constant.Reader({
                 'x_wind': -3.0,  # m/s
                 'y_wind': -2.0,  # m/s
@@ -336,6 +356,8 @@ def main():
                        help='Particles per detection point')
     parser.add_argument('--currents-url', help='OPeNDAP URL for ocean currents')
     parser.add_argument('--winds-url', help='OPeNDAP URL for winds')
+    parser.add_argument('--currents-file', help='Local NetCDF file with ocean currents')
+    parser.add_argument('--winds-file', help='Local NetCDF/GRIB file with wind data')
     parser.add_argument('--roi', help='ROI file for clipping results')
     parser.add_argument('--start-time', help='Start time (YYYY-MM-DD HH:MM), default: now UTC')
     parser.add_argument('--verbose', '-v', action='store_true',
@@ -363,8 +385,13 @@ def main():
         # Setup model
         forecaster.setup_model(windage=args.windage)
         
-        # Add readers
-        forecaster.add_readers(args.currents_url, args.winds_url)
+        # Add readers (prefer local files over OPeNDAP)
+        forecaster.add_readers(
+            currents_url=args.currents_url,
+            winds_url=args.winds_url,
+            currents_file=args.currents_file,
+            winds_file=args.winds_file,
+        )
         
         # Load seed points
         lons, lats = forecaster.load_seed_points(args.detections)
