@@ -47,9 +47,23 @@ COASTSNAP_SEEDS = [
 # Additional well-known beaching areas in the Western Region that are
 # NOT covered by CoastSnap but commonly report sargassum landings.
 SUPPLEMENTARY_SEEDS = [
-    {"name": "AXIM",            "lon": -2.240, "lat": 4.860},
-    {"name": "DIXCOVE",         "lon": -1.960, "lat": 4.780},
+    {"name": "AXIM",              "lon": -2.240, "lat": 4.860},
+    {"name": "DIXCOVE",           "lon": -1.960, "lat": 4.780},
     {"name": "CAPE THREE POINTS", "lon": -2.090, "lat": 4.740},
+    # Central Region coast — fills the detection gap between lon -1.7 and 0.0
+    {"name": "TAKORADI",          "lon": -1.760, "lat": 4.890},
+    {"name": "SEKONDI",           "lon": -1.720, "lat": 4.920},
+    {"name": "SHAMA",             "lon": -1.620, "lat": 4.950},
+    {"name": "KOMENDA",           "lon": -1.490, "lat": 5.020},
+    {"name": "ELMINA",            "lon": -1.350, "lat": 5.080},
+    {"name": "CAPE COAST",        "lon": -1.250, "lat": 5.100},
+    {"name": "MOREE",             "lon": -1.130, "lat": 5.110},
+    {"name": "ANOMABO",           "lon": -1.080, "lat": 5.130},
+    {"name": "SALTPOND",          "lon": -1.060, "lat": 5.190},
+    {"name": "WINNEBA",           "lon": -0.630, "lat": 5.340},
+    # Greater Accra coast
+    {"name": "TEMA",              "lon":  0.010, "lat": 5.640},
+    {"name": "KOKROBITE",         "lon": -0.350, "lat": 5.480},
 ]
 
 
@@ -75,7 +89,7 @@ def build_seed_feature(seed: dict, date_str: str) -> dict:
 
 def inject_seeds(detections_path: str, output_path: str | None = None,
                  date_str: str | None = None, include_supplementary: bool = True,
-                 skip_if_covered: bool = True, coverage_radius_deg: float = 0.15):
+                 skip_if_covered: bool = True, coverage_radius_deg: float = 0.08):
     """
     Read an existing merged-detections GeoJSON, add CoastSnap seeds where
     satellite coverage is sparse, and write the result.

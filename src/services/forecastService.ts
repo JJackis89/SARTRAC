@@ -48,6 +48,8 @@ export interface DetectionPoint {
   value: number;
   source: string;
   date: string;
+  confidence?: number;
+  n_sources?: number;
 }
 
 export interface DetectionData {
@@ -504,6 +506,8 @@ class ForecastService {
           value: f.properties?.chlor_a ?? f.properties?.value ?? 0,
           source: f.properties?.source ?? f.properties?.dataset ?? 'satellite',
           date: f.properties?.date ?? date,
+          confidence: f.properties?.confidence ?? undefined,
+          n_sources: f.properties?.n_sources ?? undefined,
         }));
 
       return { points, date, totalPoints: points.length };

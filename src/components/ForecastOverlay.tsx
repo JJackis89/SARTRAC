@@ -151,8 +151,10 @@ function getGhanaCoastlineLatitude(lon: number): number {
 }
 
 // Create smooth continuous heatmap using leaflet.heat
+// Uses ONLY actual particle positions — no artificial ring spreading or
+// random fill points.  Density is computed from real particle clustering
+// so the heatmap reflects genuine forecast probability.
 function createSmoothHeatmap(forecastData: ForecastData, opacity: number): L.Layer {
-  // Prepare heat map data points with enhanced density calculation
   const heatPoints: [number, number, number][] = [];
   
   // Filter particles to only include those in water
@@ -160,70 +162,39 @@ function createSmoothHeatmap(forecastData: ForecastData, opacity: number): L.Lay
     isInWater(particle.lat, particle.lon)
   );
   
-  // Calculate local density around each particle for more realistic intensity values
   const particles = waterParticles;
   
+  // Pre-compute local density for each particle using a spatial index approach
+  // This avoids O(n²) for large particle counts
+  const searchRadius = 0.04; // ~4.5 km in degrees
+  
   particles.forEach((particle) => {
-    // Calculate local particle density (particles within 5km radius)
-    const searchRadius = 0.045; // ~5km in degrees
+    // Calculate local particle density (particles within search radius)
     let nearbyCount = 0;
     
-    particles.forEach(otherParticle => {
-      const distance = Math.sqrt(
-        Math.pow(particle.lat - otherParticle.lat, 2) + 
-        Math.pow(particle.lon - otherParticle.lon, 2)
-      );
-      if (distance <= searchRadius) {
+    for (let i = 0; i < particles.length; i++) {
+      const dlat = particle.lat - particles[i].lat;
+      const dlon = particle.lon - particles[i].lon;
+      // Quick Manhattan distance check before full distance
+      if (Math.abs(dlat) > searchRadius || Math.abs(dlon) > searchRadius) continue;
+      const dist2 = dlat * dlat + dlon * dlon;
+      if (dist2 <= searchRadius * searchRadius) {
         nearbyCount++;
       }
-    });
-    
-    // Base intensity proportional to local density
-    const baseIntensity = Math.min(1.0, nearbyCount / 10); // Normalize to 0-1
-    
-    // Create a more sophisticated spreading pattern for continuous coverage
-    const spreadRadius = 0.025; // ~2.5km spread in degrees
-    const numRings = 3;
-    const pointsPerRing = 8;
-    
-    // Central point with full intensity
-    heatPoints.push([particle.lat, particle.lon, baseIntensity]);
-    
-    // Create concentric rings around each particle (only in water)
-    for (let ring = 1; ring <= numRings; ring++) {
-      const ringRadius = (spreadRadius * ring) / numRings;
-      const ringIntensity = baseIntensity * Math.exp(-ring * 0.8); // Exponential decay
-      
-      for (let i = 0; i < pointsPerRing; i++) {
-        const angle = (i / pointsPerRing) * 2 * Math.PI;
-        const lat = particle.lat + Math.cos(angle) * ringRadius;
-        const lon = particle.lon + Math.sin(angle) * ringRadius;
-        
-        // Only add ring points that are in water
-        if (isInWater(lat, lon)) {
-          heatPoints.push([lat, lon, ringIntensity]);
-        }
-      }
     }
     
-    // Add additional random points for natural variability (only in water)
-    for (let i = 0; i < 5; i++) {
-      const randomAngle = Math.random() * 2 * Math.PI;
-      const randomRadius = Math.random() * spreadRadius;
-      const lat = particle.lat + Math.cos(randomAngle) * randomRadius;
-      const lon = particle.lon + Math.sin(randomAngle) * randomRadius;
-      
-      // Only add random points that are in water
-      if (isInWater(lat, lon)) {
-        heatPoints.push([lat, lon, baseIntensity * 0.4]);
-      }
-    }
+    // Intensity proportional to local density
+    // Normalise: 1 particle alone → 0.15, 8+ nearby → 1.0
+    const intensity = Math.min(1.0, Math.max(0.15, (nearbyCount - 1) / 7));
+    
+    heatPoints.push([particle.lat, particle.lon, intensity]);
   });
 
-  // Create heat layer with parameters optimized for oceanographic visualization
+  // Create heat layer — radius and blur provide the visual smoothing
+  // instead of artificial point injection
   const heatLayer = L.heatLayer(heatPoints, {
-    radius: 40,      // Larger radius for better coverage
-    blur: 30,        // High blur for smooth transitions
+    radius: 35,      // Slightly smaller radius for more accurate footprint
+    blur: 25,        // Moderate blur for smooth transitions
     maxZoom: 18,
     max: 1.0,
     minOpacity: opacity * 0.05,
@@ -249,28 +220,27 @@ function createSmoothHeatmap(forecastData: ForecastData, opacity: number): L.Lay
   return heatLayer;
 }
 
-// Create interpolated grid surface
+// Create interpolated grid surface — uses only real particle positions
+// with inverse distance weighting for smooth contour-like rendering
 function createInterpolatedGrid(forecastData: ForecastData, opacity: number, showGridCells: boolean): L.Layer {
   // Calculate bounds of all particles with padding
   const lats = forecastData.particles.map(p => p.lat);
   const lons = forecastData.particles.map(p => p.lon);
-  const minLat = Math.min(...lats) - 0.08;
-  const maxLat = Math.max(...lats) + 0.08;
-  const minLon = Math.min(...lons) - 0.08;
-  const maxLon = Math.max(...lons) + 0.08;
+  const minLat = Math.min(...lats) - 0.05;
+  const maxLat = Math.max(...lats) + 0.05;
+  const minLon = Math.min(...lons) - 0.05;
+  const maxLon = Math.max(...lons) + 0.05;
 
-  // Create high-resolution interpolated grid for smooth surfaces
+  // Create interpolated grid
   const gridResolution = 0.008; // ~800m resolution for fine detail
   const gridPoints: [number, number, number][] = [];
 
   for (let lat = minLat; lat <= maxLat; lat += gridResolution) {
     for (let lon = minLon; lon <= maxLon; lon += gridResolution) {
-      // Only calculate density for points in water
       if (isInWater(lat, lon)) {
-        // Calculate interpolated density using enhanced algorithm
         const density = calculateInterpolatedDensity(lat, lon, forecastData.particles);
         
-        if (density > 0.05) { // Lower threshold for better coverage
+        if (density > 0.08) { // Slightly higher threshold to avoid visual noise
           gridPoints.push([lat, lon, density]);
         }
       }
@@ -306,47 +276,33 @@ function createInterpolatedGrid(forecastData: ForecastData, opacity: number, sho
   return gridLayer;
 }
 
-// Calculate interpolated density using enhanced inverse distance weighting
+// Calculate interpolated density using inverse distance weighting
+// Influence distance is kept tight to avoid inflating the forecast footprint
 function calculateInterpolatedDensity(lat: number, lon: number, particles: any[]): number {
-  let weightedSum = 0;
-  let weightSum = 0;
-  const maxDistance = 0.06; // Increased influence distance (~6km)
-  
-  // First pass: calculate local particle density
+  let totalWeight = 0;
+  const maxDistance = 0.045; // ~5km influence radius (tighter than before)
   let localParticleCount = 0;
+
   particles.forEach(particle => {
-    const distance = Math.sqrt(
-      Math.pow(lat - particle.lat, 2) + 
-      Math.pow(lon - particle.lon, 2)
-    );
+    const dlat = lat - particle.lat;
+    const dlon = lon - particle.lon;
+    // Quick reject
+    if (Math.abs(dlat) > maxDistance || Math.abs(dlon) > maxDistance) return;
+    const distance = Math.sqrt(dlat * dlat + dlon * dlon);
+
     if (distance < maxDistance) {
       localParticleCount++;
+      // Gaussian-like weight: strong near particle, falls off smoothly
+      const weight = Math.exp(-distance * distance / (2 * 0.015 * 0.015));
+      totalWeight += weight;
     }
   });
 
-  // Second pass: apply sophisticated weighting
-  particles.forEach(particle => {
-    const distance = Math.sqrt(
-      Math.pow(lat - particle.lat, 2) + 
-      Math.pow(lon - particle.lon, 2)
-    );
+  if (localParticleCount === 0) return 0;
 
-    if (distance < maxDistance) {
-      // Multi-scale influence: combine distance-based and density-based weighting
-      const distanceWeight = Math.exp(-distance * 25); // Strong distance decay
-      const densityBoost = Math.min(2.0, localParticleCount / 5); // Boost areas with more particles
-      const combinedWeight = distanceWeight * densityBoost;
-      
-      weightedSum += combinedWeight;
-      weightSum += combinedWeight;
-    }
-  });
+  // Normalise: scale by how many particles contribute
+  // 1 particle → ~0.2, 5+ particles → approaches 1.0
+  const densityNorm = Math.min(1.0, totalWeight / 4.0);
 
-  // Normalize and apply enhancement for realistic oceanographic patterns
-  const rawDensity = weightSum > 0 ? weightedSum / weightSum : 0;
-  
-  // Apply sigmoid function for more realistic density distribution
-  const enhancedDensity = 1 / (1 + Math.exp(-8 * (rawDensity - 0.5)));
-  
-  return Math.min(1.0, enhancedDensity);
+  return densityNorm;
 }

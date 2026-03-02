@@ -302,6 +302,50 @@ class BeachedSargassumDetector:
             'vectors_task': vectors_task.id
         }
     
+    def export_points_geojson(self, results, output_path):
+        """
+        Export detections as GeoJSON Point features (polygon centroids)
+        compatible with merge_geojson_points.py.
+
+        Each polygon is converted to its centroid so the downstream merge
+        + drift-forecast pipeline can consume it like any other point
+        detection source.
+        """
+        detection_date = results['date']
+        polygons = results['detection_polygons']
+        count = polygons.size().getInfo()
+
+        if count == 0:
+            logger.info("No beached detections — writing empty GeoJSON")
+            empty = {"type": "FeatureCollection", "features": []}
+            with open(output_path, 'w') as f:
+                json.dump(empty, f)
+            return 0
+
+        # Convert polygons → centroid points and add merge-compatible props
+        def to_point_feature(feature):
+            centroid = feature.geometry().centroid(1)
+            return ee.Feature(centroid, {
+                'value': 0.5,
+                'confidence': 0.80,
+                'source': 'sentinel2_beached',
+                'detection_method': 'S2_RF_Sept2021',
+                'date': detection_date,
+                'area_m2': feature.get('area_m2'),
+            })
+
+        point_fc = polygons.map(to_point_feature)
+
+        # Fetch as GeoJSON dict (limit to 5000 features for safety)
+        geojson = point_fc.getInfo()
+        feature_count = len(geojson.get('features', []))
+        logger.info(f"Exported {feature_count} beached detection points to {output_path}")
+
+        with open(output_path, 'w') as f:
+            json.dump(geojson, f)
+
+        return feature_count
+
     def get_detection_summary(self, results):
         """Generate summary statistics for detection results"""
         
@@ -355,8 +399,15 @@ def main():
                        help='Detection threshold (0-1)')
     parser.add_argument('--output-dir', type=str, default='outputs',
                        help='Output directory for local results')
+    parser.add_argument('--out', type=str, default=None,
+                       help='Output GeoJSON path for point detections (merge-compatible)')
+    parser.add_argument('--verbose', action='store_true',
+                       help='Verbose logging')
     
     args = parser.parse_args()
+
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
     
     try:
         # Initialize detector
@@ -370,20 +421,25 @@ def main():
             export_assets=args.export_cloud
         )
         
+        # Export merge-compatible points GeoJSON
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(exist_ok=True)
+
+        out_path = args.out or str(output_dir / f'beached_{args.date}.geojson')
+        point_count = detector.export_points_geojson(results, out_path)
+        logger.info(f"Beached detection points: {point_count}")
+
         # Generate summary
         summary = detector.get_detection_summary(results)
         
         # Save summary locally
-        output_dir = Path(args.output_dir)
-        output_dir.mkdir(exist_ok=True)
-        
         summary_file = output_dir / f'beached_summary_{args.date}.json'
         with open(summary_file, 'w') as f:
             json.dump(summary, f, indent=2)
         
         logger.info(f"Detection completed successfully")
         logger.info(f"Summary: {summary}")
-        logger.info(f"Results saved to: {summary_file}")
+        logger.info(f"Results saved to: {summary_file}, {out_path}")
         
         return 0
         

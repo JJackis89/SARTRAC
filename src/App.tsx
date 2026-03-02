@@ -17,11 +17,7 @@ import AccuracyPanel from './components/AccuracyPanel';
 import MapController from './components/MapController';
 import CoastSnapPoints from './components/CoastSnapPoints';
 
-const BASE_MAPS = {
-  satellite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-  terrain: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-  minimal: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-};
+const BASE_MAP_URL = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
 function App() {
   // --- Custom hooks ---
@@ -31,7 +27,6 @@ function App() {
 
   // --- Local UI state ---
   const [drawerOpen, setDrawerOpen] = useState(true);
-  const [baseMap, setBaseMap] = useState('satellite');
   const [opacity, setOpacity] = useState(1.0);
   const [renderMode, setRenderMode] = useState<'native' | 'smooth'>('native');
   const [showGridCells, setShowGridCells] = useState(false);
@@ -98,8 +93,6 @@ function App() {
           onUncertaintyStyleChange={setUncertaintyStyle}
           driftAnimated={driftAnimated}
           onDriftAnimatedChange={setDriftAnimated}
-          baseMap={baseMap}
-          onBaseMapChange={setBaseMap}
         />
 
         {/* Map */}
@@ -120,7 +113,7 @@ function App() {
             /* Responsive: map shifts with drawer on desktop */
           >
             <TileLayer
-              url={BASE_MAPS[baseMap as keyof typeof BASE_MAPS]}
+              url={BASE_MAP_URL}
               attribution="© OpenStreetMap contributors"
             />
             <MapController onMapReady={map.handleMapReady} />

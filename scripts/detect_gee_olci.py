@@ -149,15 +149,26 @@ def detect_olci(date_str: str, lookback: int = 3) -> dict:
         baseline = r681.add(r754.subtract(r681).multiply(weight))
         return r709.subtract(baseline).rename('mci')
 
-    afai_max = col.map(compute_afai).max().clip(roi)
-    mci_max  = col.map(compute_mci).max().clip(roi)
+    afai_composite = col.map(compute_afai).median().clip(roi)
+    mci_composite  = col.map(compute_mci).median().clip(roi)
 
     # Radiance-based thresholds (empirical; radiance units ~mW/m²/sr/nm)
     # AFAI > 2.0 or MCI > 1.0 indicates floating vegetation
-    detect = afai_max.gte(2.0).Or(mci_max.gte(1.0)).rename('detect')
+    detect = afai_composite.gte(2.0).Or(mci_composite.gte(1.0)).rename('detect')
 
-    # Vectorise detection pixels → centroids
-    vectors = (detect.selfMask()
+    # Compute a continuous confidence band (0-1) from AFAI + MCI strength
+    # AFAI confidence: 0 at threshold (2.0), 1 at 10.0+ (strong signal)
+    afai_conf = afai_composite.subtract(2.0).divide(8.0).clamp(0, 1)
+    # MCI confidence: 0 at threshold (1.0), 1 at 5.0+ (strong signal)
+    mci_conf = mci_composite.subtract(1.0).divide(4.0).clamp(0, 1)
+    # Combined: take the max of the two indices for overall confidence
+    confidence = afai_conf.max(mci_conf).rename('confidence')
+
+    # Vectorise detection pixels → centroids, including confidence
+    # Stack detect mask and confidence so we can access confidence per feature
+    stacked = detect.addBands(confidence).addBands(afai_composite.rename('afai_value')).addBands(mci_composite.rename('mci_value'))
+
+    vectors = (stacked.select('detect').selfMask()
                .reduceToVectors(
                    geometry=roi,
                    scale=300,
@@ -166,12 +177,29 @@ def detect_olci(date_str: str, lookback: int = 3) -> dict:
                    eightConnected=False,
                ))
 
-    vectors = vectors.map(lambda f: f.set({
-        'date': date_str,
-        'source': 'gee_olci_afai_mci',
-        'afai_threshold': 2.0,
-        'mci_threshold': 1.0,
-    }))
+    # Sample confidence and index values at each centroid
+    def add_confidence(feature):
+        pt = feature.geometry()
+        sampled = stacked.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=pt,
+            scale=300,
+        )
+        conf = ee.Number(sampled.get('confidence')).max(0.15)
+        afai_val = ee.Number(sampled.get('afai_value'))
+        mci_val = ee.Number(sampled.get('mci_value'))
+        return feature.set({
+            'confidence': conf,
+            'afai_value': afai_val,
+            'mci_value': mci_val,
+            'date': date_str,
+            'source': 'gee_olci_afai_mci',
+            'detection_method': 'spectral_afai_mci',
+            'afai_threshold': 2.0,
+            'mci_threshold': 1.0,
+        })
+
+    vectors = vectors.map(add_confidence)
 
     n = vectors.size().getInfo()
     logger.info(f'GEE OLCI detections: {n}')

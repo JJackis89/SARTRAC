@@ -138,6 +138,23 @@ jobs:
           echo "ℹ Skipping GEE detection (EE_SERVICE_ACCOUNT not configured)"
         fi
 
+    # ── Detection: Sentinel-2 beached sargassum (if GEE creds present) ──
+    - name: Run beached sargassum detection
+      continue-on-error: true
+      env:
+        EE_SERVICE_ACCOUNT: ${{ secrets.EE_SERVICE_ACCOUNT }}
+        EE_PRIVATE_KEY: ${{ secrets.EE_PRIVATE_KEY }}
+      run: |
+        if [ -n "$EE_SERVICE_ACCOUNT" ]; then
+          echo "Running Sentinel-2 beached sargassum detection..."
+          python scripts/beached_detection_service.py \
+            --date "$FORECAST_DATE" \
+            --out "data/beached_s2_${FORECAST_DATE}.geojson" \
+            --verbose || echo "⚠ Beached detection failed (model asset may not be accessible)"
+        else
+          echo "ℹ Skipping beached detection (EE_SERVICE_ACCOUNT not configured)"
+        fi
+
     # ── Merge all detection sources ─────────────────────────────────
     - name: Merge detections
       run: |
@@ -237,7 +254,7 @@ jobs:
           python scripts/forecast_opendrift.py \
             --detections "data/merged_detections_${FORECAST_DATE}.geojson" \
             --out "outputs/forecast_${FORECAST_DATE}_${DAYS}d.geojson" \
-            --hours "$HOURS" --windage 0.01 --particles 5 \
+            --hours "$HOURS" --windage 0.02 --particles 15 \
             --roi data/ghana_20nm.geojson \
             $args --verbose || echo "  ⚠ ${DAYS}d forecast failed"
         done
@@ -296,6 +313,7 @@ jobs:
 
         PARTICLES=$(python3 -c "import json; print(len(json.load(open('$FF')).get('features',[])))" 2>/dev/null || echo "?")
         DETECTIONS=$(python3 -c "import json; print(len(json.load(open('$DF')).get('features',[])))" 2>/dev/null || echo "?")
+        BEACHED=$(python3 -c "import json,pathlib; f=pathlib.Path('data/beached_s2_${FORECAST_DATE}.geojson'); print(len(json.load(open(f)).get('features',[])) if f.exists() else '–')" 2>/dev/null || echo "–")
         P5D=$(python3 -c "import json,pathlib; f=pathlib.Path('outputs/forecast_${FORECAST_DATE}_5d.geojson'); print(len(json.load(open(f)).get('features',[])) if f.exists() else '–')" 2>/dev/null || echo "–")
         P7D=$(python3 -c "import json,pathlib; f=pathlib.Path('outputs/forecast_${FORECAST_DATE}_7d.geojson'); print(len(json.load(open(f)).get('features',[])) if f.exists() else '–')" 2>/dev/null || echo "–")
 
@@ -305,6 +323,7 @@ jobs:
         | Detail | Value |
         |--------|-------|
         | Detections | ${DETECTIONS} points |
+        | Beached (S2) | ${BEACHED} points |
         | 3-day forecast | ${PARTICLES} particles |
         | 5-day forecast | ${P5D} particles |
         | 7-day forecast | ${P7D} particles |

@@ -200,12 +200,16 @@ class ERDDAPDetector:
     def apply_threshold(self, df, dataset_key, threshold,
                          cluster_radius=0.05, min_neighbours=2):
         """
-        Apply threshold **and spatial-clustering filter** to detect Sargassum.
+        Apply threshold, spatial-clustering filter, and confidence scoring.
 
         The clustering step keeps only pixels that have at least
         *min_neighbours* other above-threshold pixels within
         *cluster_radius* degrees.  This dramatically reduces isolated
         false-positives from high-chlorophyll upwelling zones.
+
+        Confidence score (0.0-1.0) is computed from two factors:
+          1. Threshold exceedance ratio: how far above threshold (40% weight)
+          2. Cluster density: number of neighbours in radius (60% weight)
 
         Args:
             df: Cleaned DataFrame
@@ -215,7 +219,7 @@ class ERDDAPDetector:
             min_neighbours: Minimum neighbours to keep a pixel
 
         Returns:
-            DataFrame with detections only
+            DataFrame with detections and confidence scores
         """
         if df.empty:
             return df
@@ -230,18 +234,54 @@ class ERDDAPDetector:
         logger.info(f"Threshold {threshold}: {len(detections)} raw detections")
 
         if len(detections) < min_neighbours + 1:
-            return detections  # too few to cluster
+            # Still add confidence even for sparse detections
+            if not detections.empty:
+                detections['confidence'] = 0.2  # Low confidence for isolated points
+            return detections
 
-        # Step 2 — spatial-clustering filter
+        # Step 2 — spatial-clustering filter with DBSCAN-style density
         from scipy.spatial import cKDTree
         coords = detections[[lon_var, lat_var]].values
         tree = cKDTree(coords)
         neighbours = tree.query_ball_point(coords, r=cluster_radius)
-        # -1 because each point is its own neighbour
-        keep = np.array([len(n) - 1 >= min_neighbours for n in neighbours])
+        neighbour_counts = np.array([len(n) - 1 for n in neighbours])
+
+        keep = neighbour_counts >= min_neighbours
         detections = detections[keep].copy()
+        neighbour_counts = neighbour_counts[keep]
         logger.info(f"After clustering (r={cluster_radius}°, min={min_neighbours}): "
                     f"{len(detections)} detections")
+
+        if detections.empty:
+            return detections
+
+        # Step 3 — compute confidence scores
+        values = detections[var].values
+
+        # Factor 1: Threshold exceedance ratio (0-1)
+        # How many multiples above threshold: ratio=1 at threshold, capped at 5x
+        exceedance = np.clip((values / threshold - 1.0) / 4.0, 0.0, 1.0)
+
+        # Factor 2: Cluster density (0-1)
+        # Normalise neighbour count: 0 at min_neighbours, 1 at 10+ neighbours
+        max_density_neighbours = 10
+        density = np.clip(
+            (neighbour_counts - min_neighbours) / (max_density_neighbours - min_neighbours),
+            0.0, 1.0
+        )
+
+        # Combined confidence: density-weighted (chlorophyll is a proxy, cluster
+        # density is a stronger indicator of real Sargassum aggregation)
+        confidence = 0.4 * exceedance + 0.6 * density
+
+        # Floor at 0.15 (any point that survives clustering has some credibility)
+        confidence = np.clip(confidence, 0.15, 1.0)
+
+        detections['confidence'] = np.round(confidence, 3)
+        detections['neighbour_count'] = neighbour_counts
+
+        logger.info(f"Confidence scores: min={confidence.min():.2f}, "
+                    f"mean={confidence.mean():.2f}, max={confidence.max():.2f}")
 
         return detections
     
@@ -277,8 +317,17 @@ class ERDDAPDetector:
         # Add metadata
         gdf['source'] = dataset_key
         gdf['value'] = gdf[var]
+        gdf['detection_value'] = gdf[var]
         gdf['detection_method'] = 'erddap_chlor_a_proxy'
         gdf['caveat'] = 'chlorophyll proxy — validate with AFAI/MCI'
+
+        # Carry confidence from clustering step if present
+        if 'confidence' in df.columns:
+            gdf['confidence'] = df['confidence'].values[:len(gdf)]
+        else:
+            gdf['confidence'] = 0.3  # Default low confidence for unclustered
+        if 'neighbour_count' in df.columns:
+            gdf['neighbour_count'] = df['neighbour_count'].values[:len(gdf)]
         
         logger.info(f"Created {len(gdf)} point geometries")
         

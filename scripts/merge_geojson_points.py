@@ -87,21 +87,53 @@ def deduplicate_points(gdf, precision=4):
     
     # Count before deduplication
     count_before = len(gdf)
-    
+
+    # Ensure 'confidence' column exists (older detectors may not emit it)
+    if 'confidence' not in gdf.columns:
+        gdf['confidence'] = 0.3  # Default moderate-low confidence
+    # Ensure 'detection_value' column exists
+    if 'detection_value' not in gdf.columns:
+        gdf['detection_value'] = gdf.get('value', 0.0)
+
     # Group by rounded coordinates and aggregate
-    grouped = gdf.groupby(['lon_rounded', 'lat_rounded']).agg({
+    agg_dict = {
         'value': 'max',  # Take maximum value for duplicates
-        'source': lambda x: ','.join(x.unique()),  # Combine sources
+        'source': lambda x: ','.join(sorted(set(x))),  # Combine unique sources
+        'confidence': 'max',  # Take best confidence from per-source detections
+        'detection_value': 'max',
         'lon': 'first',  # Keep original coordinates
         'lat': 'first'
-    }).reset_index()
+    }
+    # Only aggregate columns that exist
+    agg_dict = {k: v for k, v in agg_dict.items() if k in gdf.columns}
+    grouped = gdf.groupby(['lon_rounded', 'lat_rounded']).agg(agg_dict).reset_index()
+
+    # Count unique sources per deduplicated point for fusion scoring
+    source_counts = gdf.groupby(['lon_rounded', 'lat_rounded'])['source'].nunique().reset_index()
+    source_counts.columns = ['lon_rounded', 'lat_rounded', 'n_sources']
+    grouped = grouped.merge(source_counts, on=['lon_rounded', 'lat_rounded'], how='left')
+
+    # Multi-source fusion: boost confidence when a detection appears in
+    # multiple independent datasets (ERDDAP S3A + S3B + GEE, etc.)
+    # Single source → no boost, 2 sources → +0.15, 3+ → +0.25
+    fusion_boost = np.where(
+        grouped['n_sources'] >= 3, 0.25,
+        np.where(grouped['n_sources'] >= 2, 0.15, 0.0)
+    )
+    if 'confidence' in grouped.columns:
+        grouped['confidence'] = np.clip(grouped['confidence'] + fusion_boost, 0.0, 1.0)
+        grouped['confidence'] = np.round(grouped['confidence'], 3)
+
+    grouped['n_sources'] = grouped['n_sources'].fillna(1).astype(int)
     
     # Recreate geometries
     grouped['geometry'] = [Point(lon, lat) for lon, lat in zip(grouped['lon'], grouped['lat'])]
     
     # Create new GeoDataFrame
+    keep_cols = ['value', 'source', 'confidence', 'detection_value', 'n_sources', 'geometry']
+    keep_cols = [c for c in keep_cols if c in grouped.columns or c == 'geometry']
     gdf_deduped = gpd.GeoDataFrame(
-        grouped[['value', 'source', 'geometry']],
+        grouped[keep_cols],
         crs=gdf.crs
     )
     
@@ -109,6 +141,9 @@ def deduplicate_points(gdf, precision=4):
     duplicates_removed = count_before - count_after
     
     logger.info(f"Deduplication: {count_before} -> {count_after} points ({duplicates_removed} duplicates removed)")
+    multi_src = (gdf_deduped.get('n_sources', pd.Series()) > 1).sum() if 'n_sources' in gdf_deduped.columns else 0
+    if multi_src > 0:
+        logger.info(f"Multi-source fusion: {multi_src} points confirmed by ≥2 independent sources")
     
     return gdf_deduped
 

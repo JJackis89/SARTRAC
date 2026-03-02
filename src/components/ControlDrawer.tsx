@@ -41,9 +41,6 @@ interface ControlDrawerProps {
   onUncertaintyStyleChange: (style: 'alpha' | 'contour' | 'hatching') => void;
   driftAnimated: boolean;
   onDriftAnimatedChange: (animated: boolean) => void;
-  // Base map
-  baseMap: string;
-  onBaseMapChange: (map: string) => void;
 }
 
 export function ControlDrawer({
@@ -71,8 +68,6 @@ export function ControlDrawer({
   onUncertaintyStyleChange,
   driftAnimated,
   onDriftAnimatedChange,
-  baseMap,
-  onBaseMapChange,
 }: ControlDrawerProps) {
   const [collapsedLayers, setCollapsedLayers] = useState<Set<string>>(new Set());
 
@@ -364,37 +359,7 @@ export function ControlDrawer({
             {/* Legend */}
             <LegendSection />
 
-            {/* Map Style */}
-            <div className="space-y-4">
-              <div
-                className="sticky top-0 z-10 p-3 rounded-lg"
-                style={{
-                  background: 'rgba(45, 62, 80, 0.8)',
-                  backdropFilter: 'blur(8px)',
-                  border: '1px solid rgba(94, 234, 212, 0.2)',
-                }}
-              >
-                <h3 className="text-sm font-bold" style={{ color: 'var(--foam-white)' }}>
-                  Map Style
-                </h3>
-              </div>
-              <div className="px-3">
-                <select
-                  value={baseMap}
-                  onChange={(e) => onBaseMapChange(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg text-sm border-none outline-none transition-all duration-200"
-                  style={{
-                    background: 'rgba(45, 62, 80, 0.8)',
-                    border: '1px solid rgba(94, 234, 212, 0.2)',
-                    color: 'var(--foam-white)',
-                  }}
-                >
-                  <option value="satellite" className="bg-slate-800">Satellite Imagery</option>
-                  <option value="terrain" className="bg-slate-800">Bathymetric Terrain</option>
-                  <option value="minimal" className="bg-slate-800">Minimal Navigation</option>
-                </select>
-              </div>
-            </div>
+
           </div>
         )}
       </div>
