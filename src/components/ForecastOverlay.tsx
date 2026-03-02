@@ -110,23 +110,36 @@ function isInWater(lat: number, lon: number): boolean {
   // Get approximate coastline position for this longitude
   const coastLat = getGhanaCoastlineLatitude(lon);
   
-  // Allow particles up to ~2km from estimated coastline (more realistic)
-  const NEARSHORE_BUFFER = 0.018; // ~2km buffer from coast
+  // Buffer accounts for heatmap visual bleed (radius 40px + blur 30px)
+  // At zoom 7 → ~0.05° per pixel side, so 40px ≈ 0.03° visual radius
+  const NEARSHORE_BUFFER = 0.035; // ~4km buffer to prevent visual bleed onto land
   return lat < (coastLat - NEARSHORE_BUFFER);
 }
 
-// More accurate Ghana coastline approximation
+// High-resolution Ghana coastline approximation (~20 points)
 function getGhanaCoastlineLatitude(lon: number): number {
-  // Key points along Ghana's coastline from west to east
+  // Detailed coastline trace from west to east (verified coordinates)
   const coastPoints = [
-    { lon: -3.0, lat: 5.05 },  // Far western region
-    { lon: -2.0, lat: 5.15 },  // Western region  
-    { lon: -1.0, lat: 5.35 },  // Sekondi-Takoradi area
-    { lon: -0.5, lat: 5.45 },  // Cape Coast area
-    { lon: 0.0, lat: 5.55 },   // Accra area
-    { lon: 0.5, lat: 5.60 },   // Tema area
-    { lon: 1.0, lat: 5.50 },   // Eastern region
-    { lon: 1.5, lat: 5.40 }    // Far eastern region
+    { lon: -3.20, lat: 5.02 },  // Half Assini / border area
+    { lon: -2.90, lat: 5.05 },  // Jaway Wharf Town
+    { lon: -2.60, lat: 4.98 },  // Beyin / Nzulezo area
+    { lon: -2.35, lat: 4.93 },  // Esiama area
+    { lon: -2.10, lat: 4.80 },  // Dixcove / Princes Town
+    { lon: -1.75, lat: 4.88 },  // Takoradi harbour
+    { lon: -1.60, lat: 4.93 },  // Sekondi
+    { lon: -1.35, lat: 5.08 },  // Elmina
+    { lon: -1.25, lat: 5.10 },  // Cape Coast
+    { lon: -1.00, lat: 5.20 },  // Saltpond / Anomabu
+    { lon: -0.75, lat: 5.29 },  // Apam area
+    { lon: -0.63, lat: 5.34 },  // Winneba
+    { lon: -0.40, lat: 5.47 },  // Gomoa Fetteh
+    { lon: -0.20, lat: 5.53 },  // Accra James Town
+    { lon: -0.01, lat: 5.62 },  // Tema harbour
+    { lon:  0.20, lat: 5.62 },  // Ningo-Prampram
+    { lon:  0.50, lat: 5.77 },  // Ada Foah area
+    { lon:  0.80, lat: 5.78 },  // Keta lagoon area
+    { lon:  1.00, lat: 5.75 },  // Keta / Aflao
+    { lon:  1.20, lat: 6.10 },  // Togo border
   ];
   
   // Find the appropriate segment and interpolate

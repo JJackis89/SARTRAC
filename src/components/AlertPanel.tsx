@@ -26,27 +26,41 @@ interface AlertPanelProps {
 }
 
 // ── Ghana coastal regions for proximity checks ──────────────────────
+// Coordinates placed AT the coastline, not inland city centres
 
 const COASTAL_REGIONS = [
-  { name: 'Western Region (Takoradi)', lat: 4.93, lon: -1.77, radiusDeg: 0.25 },
+  { name: 'Western Region (Takoradi)', lat: 4.88, lon: -1.75, radiusDeg: 0.25 },
   { name: 'Central Region (Cape Coast)', lat: 5.10, lon: -1.25, radiusDeg: 0.25 },
-  { name: 'Greater Accra (Tema)', lat: 5.63, lon: -0.01, radiusDeg: 0.25 },
-  { name: 'Volta Region (Keta)', lat: 5.92, lon: 0.99, radiusDeg: 0.25 },
-  { name: 'Sekondi', lat: 4.93, lon: -1.71, radiusDeg: 0.20 },
+  { name: 'Greater Accra (Tema)', lat: 5.62, lon: -0.01, radiusDeg: 0.25 },
+  { name: 'Volta Region (Keta)', lat: 5.75, lon: 0.99, radiusDeg: 0.25 },
+  { name: 'Sekondi', lat: 4.93, lon: -1.60, radiusDeg: 0.20 },
   { name: 'Elmina', lat: 5.08, lon: -1.35, radiusDeg: 0.15 },
-  { name: 'Winneba', lat: 5.35, lon: -0.63, radiusDeg: 0.15 },
+  { name: 'Winneba', lat: 5.34, lon: -0.63, radiusDeg: 0.15 },
 ];
 
-// Approximate Ghana coastline latitude for a given longitude
+// High-resolution Ghana coastline latitude for a given longitude
 function coastLatAt(lon: number): number {
   const pts = [
-    { lon: -3.0, lat: 5.05 },
-    { lon: -2.0, lat: 5.15 },
-    { lon: -1.0, lat: 5.35 },
-    { lon: -0.5, lat: 5.45 },
-    { lon: 0.0, lat: 5.55 },
-    { lon: 0.5, lat: 5.60 },
-    { lon: 1.0, lat: 5.50 },
+    { lon: -3.20, lat: 5.02 },
+    { lon: -2.90, lat: 5.05 },
+    { lon: -2.60, lat: 4.98 },
+    { lon: -2.35, lat: 4.93 },
+    { lon: -2.10, lat: 4.80 },
+    { lon: -1.75, lat: 4.88 },
+    { lon: -1.60, lat: 4.93 },
+    { lon: -1.35, lat: 5.08 },
+    { lon: -1.25, lat: 5.10 },
+    { lon: -1.00, lat: 5.20 },
+    { lon: -0.75, lat: 5.29 },
+    { lon: -0.63, lat: 5.34 },
+    { lon: -0.40, lat: 5.47 },
+    { lon: -0.20, lat: 5.53 },
+    { lon: -0.01, lat: 5.62 },
+    { lon:  0.20, lat: 5.62 },
+    { lon:  0.50, lat: 5.77 },
+    { lon:  0.80, lat: 5.78 },
+    { lon:  1.00, lat: 5.75 },
+    { lon:  1.20, lat: 6.10 },
   ];
   for (let i = 0; i < pts.length - 1; i++) {
     if (lon >= pts[i].lon && lon <= pts[i + 1].lon) {

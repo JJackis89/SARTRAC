@@ -109,7 +109,7 @@ function App() {
         >
           <MapContainer
             center={GHANA_CENTER}
-            zoom={7}
+            zoom={8}
             maxBounds={GHANA_BOUNDS}
             className="h-full w-full"
             zoomControl={false}

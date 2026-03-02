@@ -3,10 +3,11 @@ import L from 'leaflet';
 import html2canvas from 'html2canvas';
 import { LatLngExpression } from 'leaflet';
 
-export const GHANA_CENTER: LatLngExpression = [5.6037, -0.1870];
+// Centred on Ghana's coastline (Half Assini → Aflao)
+export const GHANA_CENTER: LatLngExpression = [5.25, -0.90];
 export const GHANA_BOUNDS: [[number, number], [number, number]] = [
-  [4.5, -3.5],
-  [11.5, 1.5],
+  [4.2, -3.5],
+  [6.8, 1.5],
 ];
 
 export function useMapControls() {
@@ -25,7 +26,7 @@ export function useMapControls() {
   }, []);
 
   const handleResetView = useCallback(() => {
-    mapRef.current?.setView(GHANA_CENTER, 7);
+    mapRef.current?.setView(GHANA_CENTER, 8);
   }, []);
 
   const handleResetNorth = useCallback(() => {
