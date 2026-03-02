@@ -4,9 +4,7 @@ import {
   ChevronDown,
   Share,
   HelpCircle,
-  User,
   Layers,
-  Search,
   Camera,
   X,
 } from 'lucide-react';
@@ -48,14 +46,12 @@ export function Header({
   onShare,
   onRegionChange,
 }: HeaderProps) {
-  const [showSearch, setShowSearch] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const [selectedRegion, setSelectedRegion] = useState('Ghana Coast');
 
   const [showHelp, setShowHelp] = useState(false);
 
   const handleHelp = () => setShowHelp((p) => !p);
-  const handleAccount = () => {}; // Reserved for future authentication
+
 
   const handleRegionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const name = e.target.value;
@@ -119,31 +115,8 @@ export function Header({
           </div>
         </div>
 
-        {/* Center: Location & Search */}
+        {/* Center: Region Navigation */}
         <div className="hidden sm:flex items-center space-x-4">
-          {showSearch ? (
-            <div
-              className="flex items-center space-x-2 px-3 py-2 rounded-lg"
-              style={{
-                background: 'rgba(45, 62, 80, 0.8)',
-                border: '1px solid rgba(94, 234, 212, 0.2)',
-              }}
-            >
-              <Search className="h-4 w-4" style={{ color: 'var(--teal-foam)' }} />
-              <input
-                type="text"
-                placeholder="Search locations..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-transparent text-sm border-none outline-none w-48 focus-ocean"
-                style={{ color: 'var(--foam-white)' }}
-                autoFocus
-                onBlur={() => setShowSearch(false)}
-                aria-label="Search for locations on the map"
-              />
-            </div>
-          ) : (
-            <>
               <div
                 className="flex items-center space-x-2 px-3 py-2 rounded-lg"
                 style={{
@@ -167,20 +140,6 @@ export function Header({
                 </select>
                 <ChevronDown className="h-3 w-3" style={{ color: 'var(--teal-foam)' }} />
               </div>
-
-              <button
-                onClick={() => setShowSearch(true)}
-                className="p-2 rounded-lg transition-all duration-200"
-                style={{
-                  background: 'rgba(45, 62, 80, 0.6)',
-                  border: '1px solid rgba(94, 234, 212, 0.15)',
-                  color: 'var(--teal-foam)',
-                }}
-              >
-                <Search className="h-4 w-4" />
-              </button>
-            </>
-          )}
         </div>
 
         {/* Right: Status & Actions */}
@@ -327,18 +286,7 @@ export function Header({
               <HelpCircle className="h-4 w-4" />
             </button>
 
-            <button
-              className="hidden sm:block p-2 rounded-lg transition-all duration-200"
-              style={{
-                background: 'rgba(45, 62, 80, 0.6)',
-                border: '1px solid rgba(94, 234, 212, 0.15)',
-                color: 'var(--teal-foam)',
-              }}
-              title="Account"
-              onClick={handleAccount}
-            >
-              <User className="h-4 w-4" />
-            </button>
+
           </div>
         </div>
       </div>

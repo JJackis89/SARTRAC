@@ -1,4 +1,4 @@
-import { Play, Pause, Calendar, Activity, Info } from 'lucide-react';
+import { Play, Pause, Activity, Info } from 'lucide-react';
 import { ForecastData } from '../services/forecastService';
 
 interface TimelinePlayerProps {
@@ -73,17 +73,7 @@ export function TimelinePlayer({
                 </span>
               </>
             )}
-            <button
-              className="p-1 rounded transition-all duration-200"
-              style={{
-                background: 'rgba(45, 62, 80, 0.6)',
-                border: '1px solid rgba(94, 234, 212, 0.15)',
-                color: 'var(--teal-foam)',
-              }}
-              title="Jump to Date"
-            >
-              <Calendar className="h-3 w-3" />
-            </button>
+
           </div>
 
           {currentForecast && (
