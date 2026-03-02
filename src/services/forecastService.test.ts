@@ -45,6 +45,8 @@ function makeRelease(tag: string, hasAsset = true) {
 describe('ForecastService', () => {
   beforeEach(() => {
     forecastService.clearCache();
+    // Also invalidate the internal releases cache so each test starts fresh
+    (forecastService as any).releasesCache = null;
     vi.restoreAllMocks();
   });
 
@@ -56,9 +58,9 @@ describe('ForecastService', () => {
     const geojson = makeFakeGeoJSON(5);
     const release = makeRelease('forecast-2025-01-15');
 
-    // First fetch → latest release; second fetch → asset GeoJSON
+    // First fetch → releases list; second fetch → asset GeoJSON
     vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify(release), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([release]), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }));
 
     const result = await forecastService.getLatestForecast();
@@ -75,25 +77,23 @@ describe('ForecastService', () => {
     const release = makeRelease('forecast-2025-01-15');
 
     vi.spyOn(globalThis, 'fetch')
-      // First call: release + asset
-      .mockResolvedValueOnce(new Response(JSON.stringify(release), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }))
-      // Second call: release (asset skipped because date is cached)
-      .mockResolvedValueOnce(new Response(JSON.stringify(release), { status: 200 }));
+      // First call: releases list + asset
+      .mockResolvedValueOnce(new Response(JSON.stringify([release]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }));
 
     const first = await forecastService.getLatestForecast();
     const second = await forecastService.getLatestForecast();
 
     expect(first).toEqual(second);
-    // 3 fetch calls: release + asset + release (cache hit on date)
-    expect(fetch).toHaveBeenCalledTimes(3);
+    // 2 fetch calls: releases list + asset (both cached for second call)
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it('getLatestForecast falls back to demo when release has no asset', async () => {
     const release = makeRelease('forecast-2025-01-15', false);
 
     vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify(release), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([release]), { status: 200 }))
       // tryLoadDemoData will fetch /test_forecast_real.geojson and fail
       .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
 
@@ -104,6 +104,8 @@ describe('ForecastService', () => {
 
   it('getLatestForecast surfaces error when API returns 404 (no releases)', async () => {
     vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+      // static fallback fails
       .mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
       // demo fallback also fails
       .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
@@ -121,15 +123,17 @@ describe('ForecastService', () => {
     const release = makeRelease('forecast-2025-01-15');
 
     const spy = vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify(release), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([release]), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }));
 
     await forecastService.getLatestForecast();
     expect(spy).toHaveBeenCalledTimes(2);
 
     forecastService.clearCache();
+    // Also invalidate releases cache to force re-fetch
+    (forecastService as any).releasesCache = null;
 
-    spy.mockResolvedValueOnce(new Response(JSON.stringify(release), { status: 200 }))
+    spy.mockResolvedValueOnce(new Response(JSON.stringify([release]), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }));
 
     await forecastService.getLatestForecast();
@@ -145,7 +149,7 @@ describe('ForecastService', () => {
     const geojson = makeFakeGeoJSON(1);
 
     vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify(release), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([release]), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }));
 
     await forecastService.getLatestForecast();

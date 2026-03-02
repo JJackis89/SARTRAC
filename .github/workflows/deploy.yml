@@ -3,6 +3,10 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  # Redeploy after daily forecast so baked-in data stays fresh
+  workflow_run:
+    workflows: ['Daily Sargassum Forecast']
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -17,6 +21,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Skip if triggered by a failed forecast run
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +37,24 @@ jobs:
         env:
           NODE_ENV: production
           GITHUB_ACTIONS: true
+
+      # Bake latest forecast into the deploy so the app works even if
+      # the GitHub API is rate-limited or slow.
+      - name: Include latest forecast data
+        run: |
+          TAG=$(gh release view --json tagName -q '.tagName' 2>/dev/null || echo "")
+          if [ -n "$TAG" ]; then
+            DATE="${TAG#forecast-}"
+            mkdir -p dist/data
+            gh release download "$TAG" --pattern "forecast_*.geojson" --dir dist/data/ || true
+            gh release download "$TAG" --pattern "merged_detections_*.geojson" --dir dist/data/ || true
+            echo "{\"tag\":\"$TAG\",\"date\":\"$DATE\"}" > dist/data/manifest.json
+            echo "✅ Baked forecast $TAG into deploy ($(ls dist/data/ | wc -l) files)"
+          else
+            echo "⚠️ No forecast release found — deploying without baked data"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - uses: actions/upload-pages-artifact@v3
         with:

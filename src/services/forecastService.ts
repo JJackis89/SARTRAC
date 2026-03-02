@@ -124,6 +124,9 @@ async function fetchAsset(browserDownloadUrl: string): Promise<Response> {
 
 class ForecastService {
   private cache = new Map<string, ForecastData>();
+  /** Cached releases list — avoids repeated API calls (rate-limit: 60/h). */
+  private releasesCache: { data: any[]; fetchedAt: number } | null = null;
+  private static RELEASES_TTL = 5 * 60_000; // 5 min
 
   // -- Loading-state pub/sub -------------------------------------------------
   private listeners: Array<(s: LoadingState) => void> = [];
@@ -173,20 +176,76 @@ class ForecastService {
     return { ...this.state };
   }
 
+  // -- Releases cache --------------------------------------------------------
+
+  /** Fetch all releases (cached for 5 min to avoid GitHub API rate limits). */
+  private async fetchReleases(): Promise<any[]> {
+    if (
+      this.releasesCache &&
+      Date.now() - this.releasesCache.fetchedAt < ForecastService.RELEASES_TTL
+    ) {
+      return this.releasesCache.data;
+    }
+
+    const res = await fetchWithTimeout(`${GITHUB_API_BASE()}/releases?per_page=10`);
+    if (!res.ok) {
+      if (res.status === 403) {
+        throw new Error('GitHub API rate limit exceeded — try again in a few minutes');
+      }
+      if (res.status === 404) {
+        throw new Error('No releases found. The automated forecast system runs daily at 06:00 UTC.');
+      }
+      throw new Error(`GitHub API returned ${res.status}`);
+    }
+    const data = await res.json();
+    this.releasesCache = { data, fetchedAt: Date.now() };
+    return data;
+  }
+
+  /** Try loading forecast data baked into the deployed site (dist/data/). */
+  private async tryLoadStaticForecast(horizon: ForecastHorizon = '3d'): Promise<ForecastData | null> {
+    try {
+      const base = import.meta.env.BASE_URL ?? '/';
+      const manifestRes = await fetchWithTimeout(`${base}data/manifest.json`, 5_000);
+      if (!manifestRes.ok) return null;
+      const manifest = await manifestRes.json();
+      const date = manifest.date as string;
+      if (!date) return null;
+
+      // Try horizon-specific, then default
+      const filenames = [
+        `forecast_${date}_${horizon}.geojson`,
+        `forecast_${date}.geojson`,
+      ];
+      for (const name of filenames) {
+        try {
+          const r = await fetchWithTimeout(`${base}data/${name}`, 5_000);
+          if (!r.ok) continue;
+          const geo = await r.json();
+          const data = this.parseGeoJSON(geo, date);
+          if (data.particles.length > 0) {
+            data.horizon = horizon;
+            return data;
+          }
+        } catch { /* try next */ }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Fetch the most recent forecast from GitHub Releases. */
   async getLatestForecast(horizon: ForecastHorizon = '3d'): Promise<ForecastData | null> {
     this.emit({ isLoading: true, error: null });
     try {
-      const res = await fetchWithTimeout(`${GITHUB_API_BASE()}/releases/latest`);
+      const releases = await this.fetchReleases();
+      const release = releases.find((r: any) => r.tag_name?.startsWith('forecast-'));
 
-      if (!res.ok) {
-        if (res.status === 404) {
-          throw new Error('No releases found. The automated forecast system runs daily at 06:00 UTC.');
-        }
-        throw new Error(`GitHub API returned ${res.status}`);
+      if (!release) {
+        throw new Error('No forecast releases found.');
       }
 
-      const release = await res.json();
       const forecastDate = this.extractDate(release.tag_name);
 
       const cacheKey = `${forecastDate}-${horizon}`;
@@ -242,10 +301,18 @@ class ForecastService {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       console.error('getLatestForecast:', msg);
 
-      // Graceful fallback: serve demo data so the UI stays usable
+      // Tier 2: Try static forecast data baked into the deploy
+      const staticData = await this.tryLoadStaticForecast(horizon);
+      if (staticData) {
+        console.info('Loaded static forecast data from deploy');
+        this.cache.set(`${staticData.date}-${horizon}`, staticData);
+        this.emit({ isLoading: false, error: null, lastUpdated: new Date() });
+        return staticData;
+      }
+
+      // Tier 3: Serve demo data so the UI stays usable
       const demo = await this.tryLoadDemoData(new Date().toISOString().split('T')[0]);
       if (demo) {
-        // Show as "Live" with demo data — user sees particles, not "Offline"
         this.emit({ isLoading: false, error: null, lastUpdated: new Date() });
         return demo;
       }
@@ -259,9 +326,8 @@ class ForecastService {
     if (this.cache.has(date)) return this.cache.get(date)!;
 
     try {
-      const res = await fetchWithTimeout(`${GITHUB_API_BASE()}/releases`);
-      const releases = await res.json();
-      const release = releases.find((r: any) => r.tag_name.includes(date));
+      const releases = await this.fetchReleases();
+      const release = releases.find((r: any) => r.tag_name?.includes(date));
 
       if (!release) return this.generateDemo(date);
 
@@ -283,8 +349,7 @@ class ForecastService {
   /** List available forecast dates. */
   async getAvailableForecastDates(): Promise<string[]> {
     try {
-      const res = await fetchWithTimeout(`${GITHUB_API_BASE()}/releases`);
-      const releases = await res.json();
+      const releases = await this.fetchReleases();
       const dates = (releases as any[])
         .filter((r) => r.tag_name?.startsWith('forecast-'))
         .map((r) => this.extractDate(r.tag_name))
@@ -359,7 +424,8 @@ class ForecastService {
   /** Try loading the local demo GeoJSON shipped with the app. */
   private async tryLoadDemoData(date: string): Promise<ForecastData | null> {
     try {
-      const res = await fetch('/test_forecast_real.geojson');
+      const base = import.meta.env.BASE_URL ?? '/';
+      const res = await fetch(`${base}test_forecast_real.geojson`);
       if (!res.ok) return null;
       const geo = await res.json();
       const data = this.parseGeoJSON(geo, date);
