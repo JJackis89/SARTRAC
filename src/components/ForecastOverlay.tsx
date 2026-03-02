@@ -38,14 +38,6 @@ export const ForecastOverlay: React.FC<ForecastOverlayProps> = ({
 
   // Update layer when data or settings change
   useEffect(() => {
-    console.log('ForecastOverlay useEffect triggered:', { 
-      visible, 
-      hasData: !!forecastData, 
-      isEmpty: forecastData?.isEmpty,
-      renderMode,
-      particleCount: forecastData?.particles?.length
-    });
-
     // Remove existing layer
     if (layerRef.current && map) {
       map.removeLayer(layerRef.current);
@@ -66,7 +58,6 @@ export const ForecastOverlay: React.FC<ForecastOverlayProps> = ({
       }
 
       if (layerRef.current) {
-        console.log('Adding new layer to map');
         // Add the layer and ensure it doesn't capture mouse events
         map.addLayer(layerRef.current);
         
@@ -168,18 +159,6 @@ function createSmoothHeatmap(forecastData: ForecastData, opacity: number): L.Lay
   const waterParticles = forecastData.particles.filter(particle => 
     isInWater(particle.lat, particle.lon)
   );
-  
-  const filterPercentage = ((forecastData.particles.length - waterParticles.length) / forecastData.particles.length * 100).toFixed(1);
-  console.log(`Water masking: ${forecastData.particles.length} → ${waterParticles.length} particles (${filterPercentage}% filtered out)`);
-  
-  // Show sample coordinates for debugging
-  if (forecastData.particles.length > 0) {
-    console.log('Sample particle locations:');
-    forecastData.particles.slice(0, 3).forEach((p, i) => {
-      const inWater = isInWater(p.lat, p.lon);
-      console.log(`  ${i+1}: [${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}] → ${inWater ? 'WATER ✓' : 'LAND ✗'}`);
-    });
-  }
   
   // Calculate local density around each particle for more realistic intensity values
   const particles = waterParticles;

@@ -8,11 +8,19 @@ import {
   Layers,
   Search,
   Camera,
+  X,
 } from 'lucide-react';
 import { ForecastData } from '../services/forecastService';
 import epaLogo from '../assets/logos/epa-logo.png';
 import ugLogo from '../assets/logos/ug-logo.png';
 import ghLogo from '../assets/logos/gh-logo.png';
+
+const REGIONS: Record<string, { center: [number, number]; zoom: number }> = {
+  'Ghana Coast': { center: [5.25, -0.90], zoom: 8 },
+  'Western Region': { center: [4.95, -2.30], zoom: 10 },
+  'Central Region': { center: [5.10, -1.25], zoom: 10 },
+  'Greater Accra': { center: [5.55, -0.15], zoom: 11 },
+};
 
 interface HeaderProps {
   isLoading: boolean;
@@ -24,6 +32,7 @@ interface HeaderProps {
   onToggleDrawer: () => void;
   onScreenshot: () => void;
   onShare: () => void;
+  onRegionChange?: (center: [number, number], zoom: number) => void;
 }
 
 export function Header({
@@ -36,41 +45,28 @@ export function Header({
   onToggleDrawer,
   onScreenshot,
   onShare,
+  onRegionChange,
 }: HeaderProps) {
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedRegion, setSelectedRegion] = useState('Ghana Coast');
 
-  const handleHelp = () => {
-    alert(`Ghana Sargassum Early Advisory System Help:
+  const [showHelp, setShowHelp] = useState(false);
 
-Navigation:
-• Click and drag to pan the map
-• Use mouse wheel or +/- buttons to zoom
-• Click timeline controls to view different forecast days
+  const handleHelp = () => setShowHelp((p) => !p);
+  const handleAccount = () => {}; // Reserved for future authentication
 
-Timeline Controls:
-• Play/Pause: Space bar or play button
-• Step through days: Arrow keys or click timeline
-• Adjust speed: Use playback speed controls
-• Loop: Toggle continuous playback
-
-Layers:
-• Toggle different forecast layers on/off
-• Adjust opacity with the slider
-• Switch between satellite/terrain base maps
-
-Color Scale:
-• Green: Low Sargassum density
-• Yellow/Orange: Moderate density
-• Red: High density
-• Dark Red: Very high density`);
-  };
-
-  const handleAccount = () => {
-    alert('Account features coming soon!');
+  const handleRegionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const name = e.target.value;
+    setSelectedRegion(name);
+    const region = REGIONS[name];
+    if (region && onRegionChange) {
+      onRegionChange(region.center, region.zoom);
+    }
   };
 
   return (
+    <>
     <header
       className="fixed top-0 left-0 right-0 z-[9999] h-12 sm:h-16"
       style={{
@@ -87,7 +83,7 @@ Color Scale:
           <div className="flex items-center space-x-3">
             <img src={ghLogo} alt="Republic of Ghana" className="h-8 w-8 object-contain" />
             <div>
-              <h1 className="text-lg font-bold sm:text-lg text-sm" style={{ color: 'var(--foam-white)' }}>
+              <h1 className="text-sm sm:text-lg font-bold" style={{ color: 'var(--foam-white)' }}>
                 <span className="hidden sm:inline">Ghana Sargassum Early Advisory System</span>
                 <span className="sm:hidden">SARTRAC</span>
               </h1>
@@ -159,6 +155,8 @@ Color Scale:
                   className="bg-transparent text-sm font-medium border-none outline-none appearance-none cursor-pointer focus-ocean"
                   style={{ color: 'var(--foam-white)' }}
                   aria-label="Select geographic region"
+                  value={selectedRegion}
+                  onChange={handleRegionChange}
                 >
                   <option className="bg-slate-800">Ghana Coast</option>
                   <option className="bg-slate-800">Western Region</option>
@@ -343,5 +341,62 @@ Color Scale:
         </div>
       </div>
     </header>
+
+    {/* Help Modal */}
+    {showHelp && (
+      <div
+        className="fixed inset-0 z-[10000] flex items-center justify-center"
+        style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
+        onClick={() => setShowHelp(false)}
+      >
+        <div
+          className="relative max-w-lg w-full mx-4 rounded-xl p-6 shadow-2xl"
+          style={{
+            background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+            border: '1px solid rgba(94, 234, 212, 0.3)',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => setShowHelp(false)}
+            className="absolute top-3 right-3 p-1 rounded-lg hover:bg-white/10 transition-colors"
+            style={{ color: 'var(--teal-foam)' }}
+          >
+            <X className="h-5 w-5" />
+          </button>
+          <h2 className="text-lg font-bold mb-4" style={{ color: 'var(--foam-white)' }}>
+            How to Use SARTRAC
+          </h2>
+          <div className="space-y-3 text-sm" style={{ color: 'var(--seafoam-light)' }}>
+            <div>
+              <h3 className="font-semibold mb-1" style={{ color: 'var(--teal-foam)' }}>Map Navigation</h3>
+              <p>Drag to pan, scroll to zoom, or use the controls on the right. Select a coastal region from the dropdown to navigate quickly.</p>
+            </div>
+            <div>
+              <h3 className="font-semibold mb-1" style={{ color: 'var(--teal-foam)' }}>Forecast Layers</h3>
+              <p>Open the layers panel (left) to toggle forecast heatmap, detection points, drift vectors, and uncertainty overlays. Adjust opacity and rendering style.</p>
+            </div>
+            <div>
+              <h3 className="font-semibold mb-1" style={{ color: 'var(--teal-foam)' }}>Timeline</h3>
+              <p>Use the timeline at the bottom to step through forecast dates or press play for automatic animation. Choose 3, 5, or 7-day forecast horizons.</p>
+            </div>
+            <div>
+              <h3 className="font-semibold mb-1" style={{ color: 'var(--teal-foam)' }}>Alerts</h3>
+              <p>Sargassum alerts appear in the bottom-left panel. Click an alert to fly to its location on the map. Alert severity ranges from Watch to Critical.</p>
+            </div>
+            <div>
+              <h3 className="font-semibold mb-1" style={{ color: 'var(--teal-foam)' }}>Colour Scale</h3>
+              <p className="flex items-center gap-2">
+                <span className="inline-block w-3 h-3 rounded-full" style={{ background: '#00ff00' }} /> Low
+                <span className="inline-block w-3 h-3 rounded-full" style={{ background: '#ffff00' }} /> Moderate
+                <span className="inline-block w-3 h-3 rounded-full" style={{ background: '#ff8c00' }} /> High
+                <span className="inline-block w-3 h-3 rounded-full" style={{ background: '#ff0000' }} /> Critical
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

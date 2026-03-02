@@ -67,6 +67,7 @@ function App() {
         onToggleDrawer={() => setDrawerOpen((prev) => !prev)}
         onScreenshot={() => map.handleScreenshot(forecast.currentForecast?.date)}
         onShare={() => map.handleShare(forecast.currentForecast?.date)}
+        onRegionChange={(center, zoom) => map.mapRef.current?.flyTo(center, zoom, { duration: 1.2 })}
       />
 
       {/* Main Content */}
@@ -189,10 +190,11 @@ function App() {
             onClick={() => setShowAccuracy(prev => !prev)}
             className="absolute top-20 right-4 z-[999] bg-slate-800/90 hover:bg-slate-700 text-white
                        rounded-lg px-3 py-2 text-xs font-medium border border-slate-600/50 backdrop-blur-sm
-                       transition-colors"
+                       transition-colors flex items-center gap-1.5"
             title="Forecast accuracy metrics"
           >
-            📊 Accuracy
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+            Accuracy
           </button>
           <AccuracyPanel isOpen={showAccuracy} onClose={() => setShowAccuracy(false)} />
         </div>

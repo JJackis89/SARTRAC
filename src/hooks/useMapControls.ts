@@ -88,6 +88,20 @@ export function useMapControls() {
     }
   }, []);
 
+  const showToast = useCallback((message: string) => {
+    const toast = document.createElement('div');
+    toast.textContent = message;
+    toast.style.cssText = `
+      position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:10000;
+      background:rgba(20,184,166,0.95);color:#fff;padding:10px 20px;border-radius:8px;
+      font-family:system-ui;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.3);
+      transition:opacity 0.3s;
+    `;
+    document.body.appendChild(toast);
+    setTimeout(() => { toast.style.opacity = '0'; }, 2000);
+    setTimeout(() => document.body.removeChild(toast), 2400);
+  }, []);
+
   const handleShare = useCallback((forecastDate?: string) => {
     const url = window.location.href;
     const text = `Ghana Sargassum Early Advisory System - ${forecastDate || 'Current'} Forecast`;
@@ -96,11 +110,11 @@ export function useMapControls() {
       navigator.share({ title: 'Ghana Sargassum Forecast', text, url });
     } else {
       navigator.clipboard.writeText(`${text}\n${url}`).then(
-        () => alert('Forecast link copied to clipboard!'),
-        () => prompt('Copy this link to share:', url)
+        () => showToast('Forecast link copied to clipboard'),
+        () => { /* clipboard write failed — silent fallback */ }
       );
     }
-  }, []);
+  }, [showToast]);
 
   return {
     mapRef,
