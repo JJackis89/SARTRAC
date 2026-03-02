@@ -17,7 +17,8 @@ import ghLogo from '../assets/logos/gh-logo.png';
 
 const REGIONS: Record<string, { center: [number, number]; zoom: number }> = {
   'Ghana Coast': { center: [5.25, -0.90], zoom: 8 },
-  'Western Region': { center: [4.95, -2.30], zoom: 10 },
+  'Western (CoastSnap)': { center: [4.95, -2.55], zoom: 10 },
+  'Takoradi / Sekondi': { center: [4.90, -1.75], zoom: 11 },
   'Central Region': { center: [5.10, -1.25], zoom: 10 },
   'Greater Accra': { center: [5.55, -0.15], zoom: 11 },
 };
@@ -159,7 +160,8 @@ export function Header({
                   onChange={handleRegionChange}
                 >
                   <option className="bg-slate-800">Ghana Coast</option>
-                  <option className="bg-slate-800">Western Region</option>
+                  <option className="bg-slate-800">Western (CoastSnap)</option>
+                  <option className="bg-slate-800">Takoradi / Sekondi</option>
                   <option className="bg-slate-800">Central Region</option>
                   <option className="bg-slate-800">Greater Accra</option>
                 </select>

@@ -181,6 +181,20 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+    # ── Inject CoastSnap ground-truth seeds ───────────────────────────
+    # Satellite detection often misses the Western Region due to cloud
+    # cover or turbidity.  CoastSnap monitoring points are confirmed
+    # beaching locations — inject them as supplementary seed points so
+    # the forecast always covers these hotspots.
+    - name: Inject CoastSnap ground-truth seeds
+      run: |
+        python scripts/inject_coastsnap_seeds.py \
+          --detections "data/merged_detections_${FORECAST_DATE}.geojson" \
+          --date "$FORECAST_DATE" \
+          --verbose
+        FINAL=$(python3 -c "import json; print(len(json.load(open('data/merged_detections_${FORECAST_DATE}.geojson')).get('features',[])))" 2>/dev/null || echo 0)
+        echo "Detections after CoastSnap injection: $FINAL"
+
     # ── Download ocean data (HYCOM currents + GFS winds) ────────────
     - name: Download ocean data
       id: ocean_data

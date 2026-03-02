@@ -29,13 +29,21 @@ interface AlertPanelProps {
 // Coordinates placed AT the coastline, not inland city centres
 
 const COASTAL_REGIONS = [
+  // Western Region — CoastSnap monitoring zone
+  { name: 'Newtown / Half Assini', lat: 5.08, lon: -3.10, radiusDeg: 0.20 },
+  { name: 'Jaway / Beyin', lat: 5.02, lon: -2.76, radiusDeg: 0.25 },
+  { name: 'Sanzule / Esiama', lat: 4.95, lon: -2.40, radiusDeg: 0.20 },
+  { name: 'Axim / Princes Town', lat: 4.82, lon: -2.14, radiusDeg: 0.25 },
+  { name: 'Dixcove / Cape Three Points', lat: 4.77, lon: -1.96, radiusDeg: 0.20 },
+  // Takoradi & Central
   { name: 'Western Region (Takoradi)', lat: 4.88, lon: -1.75, radiusDeg: 0.25 },
-  { name: 'Central Region (Cape Coast)', lat: 5.10, lon: -1.25, radiusDeg: 0.25 },
-  { name: 'Greater Accra (Tema)', lat: 5.62, lon: -0.01, radiusDeg: 0.25 },
-  { name: 'Volta Region (Keta)', lat: 5.75, lon: 0.99, radiusDeg: 0.25 },
   { name: 'Sekondi', lat: 4.93, lon: -1.60, radiusDeg: 0.20 },
   { name: 'Elmina', lat: 5.08, lon: -1.35, radiusDeg: 0.15 },
+  { name: 'Central Region (Cape Coast)', lat: 5.10, lon: -1.25, radiusDeg: 0.25 },
   { name: 'Winneba', lat: 5.34, lon: -0.63, radiusDeg: 0.15 },
+  // Greater Accra & Volta
+  { name: 'Greater Accra (Tema)', lat: 5.62, lon: -0.01, radiusDeg: 0.25 },
+  { name: 'Volta Region (Keta)', lat: 5.75, lon: 0.99, radiusDeg: 0.25 },
 ];
 
 // High-resolution Ghana coastline latitude for a given longitude
