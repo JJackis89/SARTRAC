@@ -227,6 +227,8 @@ class ForecastService {
           const data = this.parseGeoJSON(geo, date);
           if (data.particles.length > 0) {
             data.horizon = horizon;
+            // Also load baked-in detections
+            data.detections = await this.tryLoadStaticDetections(date);
             return data;
           }
         } catch { /* try next */ }
@@ -234,6 +236,49 @@ class ForecastService {
       return null;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Try loading detection data baked into the deployed site (dist/data/).
+   * The deploy workflow downloads merged_detections_*.geojson alongside
+   * the forecast files so they are available as a CORS-free fallback.
+   */
+  private async tryLoadStaticDetections(date: string): Promise<DetectionData | undefined> {
+    try {
+      const base = import.meta.env.BASE_URL ?? '/';
+      const filenames = [
+        `merged_detections_${date}.geojson`,
+        // Also try without date in case the filename pattern differs
+        'merged_detections.geojson',
+      ];
+      for (const name of filenames) {
+        try {
+          const r = await fetchWithTimeout(`${base}data/${name}`, 5_000);
+          if (!r.ok) continue;
+          const geo = await r.json();
+          if (!geo.features?.length) continue;
+
+          const points: DetectionPoint[] = geo.features
+            .filter((f: any) => f.geometry?.type === 'Point')
+            .map((f: any) => ({
+              lat: f.geometry.coordinates[1],
+              lon: f.geometry.coordinates[0],
+              value: f.properties?.chlor_a ?? f.properties?.value ?? 0,
+              source: f.properties?.source ?? f.properties?.dataset ?? 'satellite',
+              date: f.properties?.date ?? date,
+              confidence: f.properties?.confidence ?? undefined,
+              n_sources: f.properties?.n_sources ?? undefined,
+            }));
+
+          if (points.length > 0) {
+            return { points, date, totalPoints: points.length };
+          }
+        } catch { /* try next */ }
+      }
+      return undefined;
+    } catch {
+      return undefined;
     }
   }
 
@@ -294,6 +339,10 @@ class ForecastService {
 
       // Also fetch detection points if available
       data.detections = await this.fetchDetections(release, forecastDate);
+      // If detection fetch failed (e.g. CORS on GitHub Pages), try baked-in static data
+      if (!data.detections) {
+        data.detections = await this.tryLoadStaticDetections(forecastDate);
+      }
       data.horizon = horizon;
 
       this.cache.set(cacheKey, data);
