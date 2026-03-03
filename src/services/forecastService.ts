@@ -320,6 +320,7 @@ class ForecastService {
       const assetRes = await fetchAsset(asset.browser_download_url);
       const geojson = await assetRes.json();
       let data = this.parseGeoJSON(geojson, forecastDate);
+      console.info(`[SARTRAC] Tier 1 (API): loaded ${data.particles.length} particles for ${forecastDate} (${horizon})`);
 
       // If real forecast is empty (pipeline found no detections / cloud cover),
       // load demo data so the UI stays usable and shows \"Live\" status.
@@ -355,7 +356,7 @@ class ForecastService {
       // Tier 2: Try static forecast data baked into the deploy
       const staticData = await this.tryLoadStaticForecast(horizon);
       if (staticData) {
-        console.info('Loaded static forecast data from deploy');
+        console.info(`[SARTRAC] Tier 2 (static): loaded ${staticData.particles.length} particles for ${staticData.date} (${horizon})`);
         this.cache.set(`${staticData.date}-${horizon}`, staticData);
         this.emit({ isLoading: false, error: null, lastUpdated: new Date() });
         return staticData;
@@ -364,6 +365,7 @@ class ForecastService {
       // Tier 3: Serve demo data so the UI stays usable
       const demo = await this.tryLoadDemoData(new Date().toISOString().split('T')[0]);
       if (demo) {
+        console.info(`[SARTRAC] Tier 3 (demo): loaded ${demo.particles.length} particles`);
         this.emit({ isLoading: false, error: null, lastUpdated: new Date() });
         return demo;
       }

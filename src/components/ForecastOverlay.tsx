@@ -192,6 +192,7 @@ function createSmoothHeatmap(forecastData: ForecastData, opacity: number): L.Lay
 
   // Create heat layer — radius and blur provide the visual smoothing
   // instead of artificial point injection
+  console.info(`[SARTRAC] Heatmap: ${forecastData.particles.length} total → ${waterParticles.length} in water → ${heatPoints.length} heat points`);
   const heatLayer = L.heatLayer(heatPoints, {
     radius: 35,      // Slightly smaller radius for more accurate footprint
     blur: 25,        // Moderate blur for smooth transitions
