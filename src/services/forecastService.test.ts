@@ -58,10 +58,13 @@ describe('ForecastService', () => {
     const geojson = makeFakeGeoJSON(5);
     const release = makeRelease('forecast-2025-01-15');
 
-    // First fetch → releases list; second fetch → asset GeoJSON
+    // fetch 1 → releases list; fetch 2 → asset GeoJSON;
+    // fetch 3-4 → tryLoadStaticDetections attempts (no baked detections)
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify([release]), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }))
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
 
     const result = await forecastService.getLatestForecast();
 
@@ -77,16 +80,18 @@ describe('ForecastService', () => {
     const release = makeRelease('forecast-2025-01-15');
 
     vi.spyOn(globalThis, 'fetch')
-      // First call: releases list + asset
+      // First call: releases list + asset + 2 static-detection attempts
       .mockResolvedValueOnce(new Response(JSON.stringify([release]), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }))
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
 
     const first = await forecastService.getLatestForecast();
     const second = await forecastService.getLatestForecast();
 
     expect(first).toEqual(second);
-    // 2 fetch calls: releases list + asset (both cached for second call)
-    expect(fetch).toHaveBeenCalledTimes(2);
+    // 4 fetch calls: releases + asset + 2 detection attempts (all cached for second call)
+    expect(fetch).toHaveBeenCalledTimes(4);
   });
 
   it('getLatestForecast falls back to demo when release has no asset', async () => {
@@ -124,21 +129,26 @@ describe('ForecastService', () => {
 
     const spy = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify([release]), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }))
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
 
     await forecastService.getLatestForecast();
-    expect(spy).toHaveBeenCalledTimes(2);
+    // releases + asset + 2 static-detection attempts
+    expect(spy).toHaveBeenCalledTimes(4);
 
     forecastService.clearCache();
     // Also invalidate releases cache to force re-fetch
     (forecastService as any).releasesCache = null;
 
     spy.mockResolvedValueOnce(new Response(JSON.stringify([release]), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }))
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
 
     await forecastService.getLatestForecast();
-    // After clearing cache, fetch is called again
-    expect(spy).toHaveBeenCalledTimes(4);
+    // After clearing cache, fetch is called again (4 + 4 = 8)
+    expect(spy).toHaveBeenCalledTimes(8);
   });
 
   it('onLoadingStateChange notifies listeners', async () => {
@@ -150,7 +160,9 @@ describe('ForecastService', () => {
 
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify([release]), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify(geojson), { status: 200 }))
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+      .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
 
     await forecastService.getLatestForecast();
     unsubscribe();
