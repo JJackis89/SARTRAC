@@ -5,6 +5,10 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch:
 
+concurrency:
+  group: forecast-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   actions: read
@@ -52,8 +56,8 @@ jobs:
         echo "RELEASE_TAG=forecast-$(date -u +%Y-%m-%d)" >> $GITHUB_ENV
         # Note: NOMADS OPeNDAP was retired (SCN 25-81). Wind data is now
         # downloaded as local NetCDF by download_ocean_data.py (UCAR THREDDS).
-        # DEFAULT_WINDS_URL kept only as a last-resort fallback if secrets set.
-        echo "DEFAULT_WINDS_URL=" >> $GITHUB_ENV
+        # DEFAULT_WINDS_URL is the UCAR THREDDS GFS 0.25° Best Time Series.
+        echo "DEFAULT_WINDS_URL=https://thredds.ucar.edu/thredds/dodsC/grib/NCEP/GFS/Global_0p25deg/Best" >> $GITHUB_ENV
 
     - name: Create output directories
       run: mkdir -p data outputs
@@ -107,17 +111,34 @@ jobs:
         # Threshold 0.3 mg/m³ is appropriate for Gulf of Guinea Sargassum.
         #
         # Datasets queried:
-        #   s3a_olci_chla  — Sentinel-3A OLCI Global 4 km (most reliable)
-        #   s3b_olci_chla  — Sentinel-3B OLCI Global 4 km
-        #   s3a_olci_sector — Sentinel-3A OLCI Sector CG 300 m (West Africa)
+        #   s3a_olci_chla  — Sentinel-3A OLCI Global 4 km (chlor_a proxy)
+        #   s3b_olci_chla  — Sentinel-3B OLCI Global 4 km (chlor_a proxy)
+        #   s3a_olci_sector — Sentinel-3A OLCI Sector CG 300 m (chlor_a proxy)
         for ds in s3a_olci_chla s3b_olci_chla s3a_olci_sector; do
-          echo "  → $ds"
+          echo "  → $ds (chlor_a proxy, threshold 0.3 mg/m³)"
           python scripts/detect_erddap_afai.py \
             --date "$FORECAST_DATE" --dataset "$ds" --threshold 0.3 \
             --lookback 14 \
             --roi data/ghana_20nm.geojson \
             --out "data/${ds}_${FORECAST_DATE}.geojson" \
             --verbose || echo "  ⚠ $ds failed"
+        done
+
+        # Real AFAI/FAI indices — scientific standard for floating mats.
+        # Each dataset carries its own `threshold_default` in datasets.yaml;
+        # we pass a conservative CLI threshold that maps to typical values.
+        #   modis_aqua_afai — MODIS-Aqua AFAI (NOAA AOML AOSWS), threshold 0.0002
+        #   s3a_olci_fai    — Sentinel-3A OLCI FAI,                threshold 0.0001
+        for entry in "modis_aqua_afai 0.0002" "s3a_olci_fai 0.0001"; do
+          ds=$(echo "$entry" | awk '{print $1}')
+          thr=$(echo "$entry" | awk '{print $2}')
+          echo "  → $ds (real index, threshold $thr)"
+          python scripts/detect_erddap_afai.py \
+            --date "$FORECAST_DATE" --dataset "$ds" --threshold "$thr" \
+            --lookback 14 \
+            --roi data/ghana_20nm.geojson \
+            --out "data/${ds}_${FORECAST_DATE}.geojson" \
+            --verbose || echo "  ⚠ $ds failed (dataset_id may need confirmation in config/datasets.yaml)"
         done
 
     # ── Detection: GEE OLCI AFAI/MCI (if credentials present) ──────
@@ -153,6 +174,37 @@ jobs:
             --verbose || echo "⚠ Beached detection failed (model asset may not be accessible)"
         else
           echo "ℹ Skipping beached detection (EE_SERVICE_ACCOUNT not configured)"
+        fi
+
+    # ── Detection: Sentinel-1 SAR fallback (if GEE creds present + optical low) ──
+    - name: Run SAR fallback detection
+      continue-on-error: true
+      env:
+        EE_SERVICE_ACCOUNT: ${{ secrets.EE_SERVICE_ACCOUNT }}
+        EE_PRIVATE_KEY: ${{ secrets.EE_PRIVATE_KEY }}
+      run: |
+        if [ -z "$EE_SERVICE_ACCOUNT" ]; then
+          echo "ℹ Skipping SAR detection (EE_SERVICE_ACCOUNT not configured)"
+          exit 0
+        fi
+
+        # Count optical detections so far
+        OPTICAL_COUNT=0
+        for f in data/*_${FORECAST_DATE}.geojson; do
+          [ -f "$f" ] && C=$(python3 -c "import json; print(len(json.load(open('$f')).get('features',[])))" 2>/dev/null || echo 0)
+          OPTICAL_COUNT=$((OPTICAL_COUNT + C))
+        done
+        echo "Optical detections so far: $OPTICAL_COUNT"
+
+        if [ "$OPTICAL_COUNT" -lt 10 ]; then
+          echo "Low optical count ($OPTICAL_COUNT < 10) — running Sentinel-1 SAR fallback..."
+          python scripts/detect_gee_sar.py \
+            --date "$FORECAST_DATE" \
+            --lookback 7 \
+            --out "data/sar_s1_${FORECAST_DATE}.geojson" \
+            --verbose || echo "⚠ SAR detection failed"
+        else
+          echo "Optical detections sufficient ($OPTICAL_COUNT) — skipping SAR"
         fi
 
     # ── Merge all detection sources ─────────────────────────────────

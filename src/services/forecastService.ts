@@ -56,6 +56,10 @@ export interface DetectionData {
   points: DetectionPoint[];
   date: string;
   totalPoints: number;
+  /** Overall data quality derived from detection sources (high = real AFAI/FAI). */
+  data_quality?: DataQuality;
+  /** Unique dataset sources present, e.g. ['modis_aqua_afai','s3a_olci_chla']. */
+  sources?: string[];
 }
 
 export type ForecastHorizon = '3d' | '5d' | '7d';
@@ -77,16 +81,40 @@ export interface ForecastData {
 const isDev = (): boolean =>
   typeof window !== 'undefined' && window.location.hostname === 'localhost';
 
+/** GitHub repo slug — configurable via VITE_GITHUB_REPO env var. */
+const GITHUB_REPO = (): string =>
+  (import.meta.env.VITE_GITHUB_REPO as string) || 'JJackis89/SARTRAC';
+
 /** Base URL for GitHub API requests (uses Vite proxy in development). */
 const GITHUB_API_BASE = (): string =>
   isDev()
-    ? '/api/github/repos/JJackis89/SARTRAC'
-    : 'https://api.github.com/repos/JJackis89/SARTRAC';
+    ? `/api/github/repos/${GITHUB_REPO()}`
+    : `https://api.github.com/repos/${GITHUB_REPO()}`;
 
 /**
  * Fetch with a timeout (default 15 s). Avoids hanging on slow or dead
  * endpoints.
  */
+/**
+ * Derive overall detection quality from per-feature `data_quality` plus
+ * the set of source dataset keys. Real AFAI/FAI datasets are `high`;
+ * chlor_a proxies are `low` unless the file already declares otherwise.
+ */
+function deriveDetectionQuality(
+  topLevelQuality: unknown,
+  sources: string[],
+): DataQuality {
+  const tl = typeof topLevelQuality === 'string' ? topLevelQuality.toLowerCase() : '';
+  if (tl === 'high' || tl === 'medium' || tl === 'low' || tl === 'demo') {
+    return tl as DataQuality;
+  }
+  const hasReal = sources.some((s) => /afai|fai|mci/.test(s));
+  const allProxy = sources.length > 0 && sources.every((s) => /chla|chlor/.test(s));
+  if (hasReal) return 'high';
+  if (allProxy) return 'low';
+  return 'medium';
+}
+
 async function fetchWithTimeout(url: string, timeoutMs = 15_000): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -108,8 +136,8 @@ async function fetchWithTimeout(url: string, timeoutMs = 15_000): Promise<Respon
  */
 async function fetchAsset(browserDownloadUrl: string): Promise<Response> {
   if (isDev()) {
-    // Transform: https://github.com/JJackis89/SARTRAC/releases/download/...
-    //         → /api/releases/JJackis89/SARTRAC/releases/download/...
+    // Transform: https://github.com/<owner>/<repo>/releases/download/...
+    //         → /api/releases/<owner>/<repo>/releases/download/...
     const proxyUrl = browserDownloadUrl.replace('https://github.com', '/api/releases');
     const res = await fetchWithTimeout(proxyUrl);
     if (res.ok) return res;
@@ -129,6 +157,37 @@ class ForecastService {
   /** Cached releases list — avoids repeated API calls (rate-limit: 60/h). */
   private releasesCache: { data: any[]; fetchedAt: number } | null = null;
   private static RELEASES_TTL = 5 * 60_000; // 5 min
+  private static LS_RELEASES_KEY = 'sartrac_releases_cache';
+
+  constructor() {
+    // Hydrate releases cache from localStorage on startup
+    this.hydrateFromStorage();
+  }
+
+  private hydrateFromStorage() {
+    try {
+      const stored = localStorage.getItem(ForecastService.LS_RELEASES_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.fetchedAt && Date.now() - parsed.fetchedAt < ForecastService.RELEASES_TTL) {
+          this.releasesCache = parsed;
+        } else {
+          localStorage.removeItem(ForecastService.LS_RELEASES_KEY);
+        }
+      }
+    } catch { /* ignore corrupt storage */ }
+  }
+
+  private persistToStorage() {
+    try {
+      if (this.releasesCache) {
+        localStorage.setItem(
+          ForecastService.LS_RELEASES_KEY,
+          JSON.stringify(this.releasesCache),
+        );
+      }
+    } catch { /* storage full or disabled */ }
+  }
 
   // -- Loading-state pub/sub -------------------------------------------------
   private listeners: Array<(s: LoadingState) => void> = [];
@@ -201,6 +260,7 @@ class ForecastService {
     }
     const data = await res.json();
     this.releasesCache = { data, fetchedAt: Date.now() };
+    this.persistToStorage();
     return data;
   }
 
@@ -272,7 +332,16 @@ class ForecastService {
             }));
 
           if (points.length > 0) {
-            return { points, date, totalPoints: points.length };
+            const sources = Array.from(
+              new Set(points.flatMap((pt) => String(pt.source).split(','))),
+            );
+            return {
+              points,
+              date,
+              totalPoints: points.length,
+              data_quality: deriveDetectionQuality(geo.properties?.data_quality, sources),
+              sources,
+            };
           }
         } catch { /* try next */ }
       }
@@ -561,7 +630,16 @@ class ForecastService {
           n_sources: f.properties?.n_sources ?? undefined,
         }));
 
-      return { points, date, totalPoints: points.length };
+      const sources = Array.from(
+        new Set(points.flatMap((pt) => String(pt.source).split(','))),
+      );
+      return {
+        points,
+        date,
+        totalPoints: points.length,
+        data_quality: deriveDetectionQuality(geo.properties?.data_quality, sources),
+        sources,
+      };
     } catch (e) {
       console.warn('Failed to fetch detections:', e);
       return undefined;

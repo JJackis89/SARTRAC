@@ -6,6 +6,7 @@ Merge multiple GeoJSON point files and deduplicate by coordinates.
 import argparse
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import geopandas as gpd
@@ -95,18 +96,30 @@ def deduplicate_points(gdf, precision=4):
     if 'detection_value' not in gdf.columns:
         gdf['detection_value'] = gdf.get('value', 0.0)
 
+    # Ensure per-feature 'data_quality' exists; rank low < medium < high
+    if 'data_quality' not in gdf.columns:
+        gdf['data_quality'] = 'low'
+    _quality_rank = {'low': 0, 'medium': 1, 'high': 2}
+    _rank_to_quality = {v: k for k, v in _quality_rank.items()}
+    gdf['_quality_rank'] = gdf['data_quality'].map(_quality_rank).fillna(0).astype(int)
+
     # Group by rounded coordinates and aggregate
     agg_dict = {
         'value': 'max',  # Take maximum value for duplicates
         'source': lambda x: ','.join(sorted(set(x))),  # Combine unique sources
         'confidence': 'max',  # Take best confidence from per-source detections
         'detection_value': 'max',
+        '_quality_rank': 'max',  # Best quality across sources for this point
         'lon': 'first',  # Keep original coordinates
         'lat': 'first'
     }
     # Only aggregate columns that exist
     agg_dict = {k: v for k, v in agg_dict.items() if k in gdf.columns}
     grouped = gdf.groupby(['lon_rounded', 'lat_rounded']).agg(agg_dict).reset_index()
+
+    if '_quality_rank' in grouped.columns:
+        grouped['data_quality'] = grouped['_quality_rank'].map(_rank_to_quality)
+        grouped = grouped.drop(columns=['_quality_rank'])
 
     # Count unique sources per deduplicated point for fusion scoring
     source_counts = gdf.groupby(['lon_rounded', 'lat_rounded'])['source'].nunique().reset_index()
@@ -130,7 +143,8 @@ def deduplicate_points(gdf, precision=4):
     grouped['geometry'] = [Point(lon, lat) for lon, lat in zip(grouped['lon'], grouped['lat'])]
     
     # Create new GeoDataFrame
-    keep_cols = ['value', 'source', 'confidence', 'detection_value', 'n_sources', 'geometry']
+    keep_cols = ['value', 'source', 'confidence', 'detection_value', 'n_sources',
+                 'data_quality', 'geometry']
     keep_cols = [c for c in keep_cols if c in grouped.columns or c == 'geometry']
     gdf_deduped = gpd.GeoDataFrame(
         grouped[keep_cols],
@@ -267,13 +281,41 @@ def main():
         # Validate output
         validated_gdf = validate_output(final_gdf, args.roi)
         
-        # Save merged file
+        # Save merged file — write as JSON with top-level FeatureCollection
+        # properties so the frontend can surface overall data_quality.
+        import json
         output_path = Path(args.out)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
+        # Compute overall data_quality (max rank across all features)
+        _quality_rank = {'low': 0, 'medium': 1, 'high': 2}
+        overall_quality = 'low'
+        if 'data_quality' in validated_gdf.columns and not validated_gdf.empty:
+            best = max(
+                (_quality_rank.get(q, 0) for q in validated_gdf['data_quality']),
+                default=0,
+            )
+            overall_quality = {v: k for k, v in _quality_rank.items()}[best]
+
+        # Serialize to file then rewrite with injected top-level properties
         validated_gdf.to_file(output_path, driver='GeoJSON')
+        try:
+            with open(output_path, 'r', encoding='utf-8') as fh:
+                fc = json.load(fh)
+            fc['properties'] = {
+                **(fc.get('properties') or {}),
+                'data_quality': overall_quality,
+                'date': args.date,
+                'processed_at': datetime.utcnow().isoformat(),
+                'n_features': len(validated_gdf),
+            }
+            with open(output_path, 'w', encoding='utf-8') as fh:
+                json.dump(fc, fh)
+        except Exception as _e:
+            logger.warning(f"Could not inject top-level properties: {_e}")
         
         logger.info(f"Successfully merged and saved {len(validated_gdf)} points to {output_path}")
+        logger.info(f"Overall data_quality: {overall_quality}")
         
         # Print summary
         if not validated_gdf.empty:

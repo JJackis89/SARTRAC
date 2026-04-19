@@ -207,6 +207,11 @@ class ERDDAPDetector:
         *cluster_radius* degrees.  This dramatically reduces isolated
         false-positives from high-chlorophyll upwelling zones.
 
+        IMPORTANT — for real AFAI/FAI datasets we relax clustering because
+        floating-mat windrows are often only 1-pixel wide. A dataset whose
+        ``index_type`` is ``'afai'`` or ``'fai'`` overrides
+        ``min_neighbours`` down to 1 and tightens ``cluster_radius``.
+
         Confidence score (0.0-1.0) is computed from two factors:
           1. Threshold exceedance ratio: how far above threshold (40% weight)
           2. Cluster density: number of neighbours in radius (60% weight)
@@ -228,6 +233,16 @@ class ERDDAPDetector:
         var = dataset['var']
         lat_var = dataset.get('lat', 'latitude')
         lon_var = dataset.get('lon', 'longitude')
+
+        # Real AFAI/FAI datasets: relax clustering so linear windrows survive.
+        index_type = dataset.get('index_type')
+        if index_type in ('afai', 'fai'):
+            min_neighbours = 1
+            cluster_radius = min(cluster_radius, 0.03)
+            logger.info(
+                f"index_type={index_type}: relaxed clustering "
+                f"(min_neighbours={min_neighbours}, radius={cluster_radius}°)"
+            )
 
         # Step 1 — simple threshold
         detections = df[df[var] >= threshold].copy()
@@ -318,8 +333,15 @@ class ERDDAPDetector:
         gdf['source'] = dataset_key
         gdf['value'] = gdf[var]
         gdf['detection_value'] = gdf[var]
-        gdf['detection_method'] = 'erddap_chlor_a_proxy'
-        gdf['caveat'] = 'chlorophyll proxy — validate with AFAI/MCI'
+        index_type = dataset.get('index_type')
+        if index_type in ('afai', 'fai'):
+            gdf['detection_method'] = f'erddap_{index_type}'
+            gdf['caveat'] = f'real {index_type.upper()} index — scientific standard'
+            gdf['data_quality'] = 'high'
+        else:
+            gdf['detection_method'] = 'erddap_chlor_a_proxy'
+            gdf['caveat'] = 'chlorophyll proxy — validate with AFAI/MCI'
+            gdf['data_quality'] = 'low'
 
         # Carry confidence from clustering step if present
         if 'confidence' in df.columns:
@@ -452,8 +474,11 @@ def main():
     parser.add_argument('--date', required=True, help='Date YYYY-MM-DD')
     parser.add_argument('--dataset', required=True, 
                        choices=['s3a_olci_chla', 's3b_olci_chla', 'viirs_chla',
-                                's3a_olci_sector'],
-                       help='Dataset to query (s3a/s3b recommended; viirs is legacy)')
+                                's3a_olci_sector',
+                                'modis_aqua_afai', 's3a_olci_fai'],
+                       help='Dataset to query (modis_aqua_afai/s3a_olci_fai '
+                            'are real AFAI/FAI; s3*_chla are proxies; '
+                            'viirs_chla is legacy)')
     parser.add_argument('--threshold', type=float, default=0.02,
                        help='Detection threshold')
     parser.add_argument('--roi', help='ROI GeoJSON file for clipping')

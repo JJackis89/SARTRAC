@@ -66,3 +66,47 @@ s3a_olci_sector:
   default_bbox: [-4.5, 2.5, 3.0, 7.0]
   fill_values: [9999, -9999, 99999, -99999]
   description: "S3A OLCI 300m Sector CG (West Africa) — experimental"
+
+# ───── Real AFAI / FAI sources (TRUE Sargassum detection) ─────────────
+#
+# These datasets expose Alternative Floating Algae Index (AFAI) or
+# Floating Algae Index (FAI) computed from red + NIR + SWIR reflectance.
+# Unlike chlor_a, these are purpose-built for detecting floating mats
+# and are the scientific standard (Wang & Hu 2016; NOAA AOML AOSWS).
+#
+# index_type: 'afai' | 'fai' — controls detection semantics.
+# When set, `detect_erddap_afai.py` treats this as a real detection
+# source (data_quality='high') rather than a chlorophyll proxy.
+
+# NOAA CoastWatch MODIS-Aqua AFAI — Atlantic / Gulf of Mexico Sargassum product.
+# Verify the exact dataset_id on your ERDDAP mirror; common IDs include
+# noaa_aoml_atlantic_afai_daily or noaacwMODISA1kmAFAI. Replace as needed.
+modis_aqua_afai:
+  server: "https://coastwatch.noaa.gov/erddap"
+  dataset_id: "noaa_aoml_atlantic_afai_daily"   # TODO: confirm for your region
+  var: "afai"
+  lat: "latitude"
+  lon: "longitude"
+  time: "time"
+  has_altitude: false
+  default_bbox: [-4.5, 2.5, 3.0, 7.0]
+  fill_values: [-9999.0, 9999.0, -32768, 32768]
+  index_type: "afai"
+  threshold_default: 0.0002      # Typical AFAI threshold for floating mats
+  description: "MODIS-Aqua AFAI — real Sargassum index (scientific standard)"
+
+# Sentinel-3 OLCI FAI via NOAA CoastWatch — alternative real index source.
+s3a_olci_fai:
+  server: "https://coastwatch.noaa.gov/erddap"
+  dataset_id: "noaa_s3a_olci_fai_daily"          # TODO: confirm dataset_id
+  var: "fai"
+  lat: "latitude"
+  lon: "longitude"
+  time: "time"
+  has_altitude: true
+  altitude_value: 0.0
+  default_bbox: [-4.5, 2.5, 3.0, 7.0]
+  fill_values: [-9999.0, 9999.0]
+  index_type: "fai"
+  threshold_default: 0.0001
+  description: "Sentinel-3A OLCI FAI — real floating-algae index"
